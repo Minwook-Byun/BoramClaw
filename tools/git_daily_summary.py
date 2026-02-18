@@ -29,6 +29,10 @@ TOOL_SPEC = {
                 "type": "string",
                 "description": "특정 작성자만 필터 (기본: 전체)",
             },
+            "include_diff": {
+                "type": "boolean",
+                "description": "각 커밋의 실제 코드 변경 내역(diff)을 포함할지 여부 (기본: false)",
+            },
         },
         "required": [],
     },
@@ -45,7 +49,7 @@ def _run_git(args: list[str], cwd: str) -> str:
     return result.stdout.strip()
 
 
-def _get_commits(repo_path: str, days: int, author: str) -> list[dict]:
+def _get_commits(repo_path: str, days: int, author: str, include_diff: bool = False) -> list[dict]:
     since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
     git_args = [
         "log", f"--since={since}",
@@ -64,13 +68,51 @@ def _get_commits(repo_path: str, days: int, author: str) -> list[dict]:
         parts = line.split("|", 4)
         if len(parts) < 5:
             continue
-        commits.append({
+
+        commit_hash = parts[0]
+
+        # 각 커밋의 변경 파일 목록 가져오기
+        try:
+            files_raw = _run_git(
+                ["diff-tree", "--no-commit-id", "--name-status", "-r", commit_hash],
+                repo_path
+            )
+            changed_files = []
+            for file_line in files_raw.split("\n"):
+                if file_line.strip():
+                    parts_file = file_line.split("\t", 1)
+                    if len(parts_file) == 2:
+                        status = parts_file[0]  # A(추가), M(수정), D(삭제)
+                        filepath = parts_file[1]
+                        changed_files.append({"status": status, "file": filepath})
+        except Exception:
+            changed_files = []
+
+        # include_diff가 True면 실제 diff도 가져오기
+        diff_content = None
+        if include_diff:
+            try:
+                # 간결한 diff (파일별 통계 + 일부 내용)
+                diff_raw = _run_git(
+                    ["show", "--stat", "--pretty=", commit_hash],
+                    repo_path
+                )
+                diff_content = diff_raw[:3000]  # 최대 3000자
+            except Exception:
+                diff_content = None
+
+        commit_data = {
             "hash": parts[0][:8],
             "author": parts[1],
             "email": parts[2],
             "date": parts[3],
             "message": parts[4],
-        })
+            "files": changed_files,
+        }
+        if diff_content:
+            commit_data["diff"] = diff_content
+
+        commits.append(commit_data)
     return commits
 
 
@@ -138,6 +180,7 @@ def run(input_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     repo_path = input_data.get("repo_path", context.get("workdir", "."))
     days = input_data.get("days", 1)
     author = input_data.get("author", "")
+    include_diff = input_data.get("include_diff", False)
 
     # git repo인지 확인
     try:
@@ -145,7 +188,7 @@ def run(input_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     except (RuntimeError, FileNotFoundError):
         return {"ok": False, "error": f"{repo_path}는 git 저장소가 아닙니다."}
 
-    commits = _get_commits(repo_path, days, author)
+    commits = _get_commits(repo_path, days, author, include_diff)
     stats = _get_diff_stats(repo_path, days)
     branches = _get_active_branches(repo_path, days)
     time_dist = _time_distribution(commits)

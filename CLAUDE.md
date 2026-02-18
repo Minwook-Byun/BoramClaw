@@ -350,3 +350,62 @@ Logs will capture all tool executions and agent decisions.
 - Chat history resets when `tools/*.py` changes to maintain consistency
 - Built-in tools (`run_shell`, `read_file`, etc.) are defined in `main.py`, not in `tools/`
 - Custom tools in `tools/` execute as subprocesses, not in-process imports
+
+### Automatic Tool Detection for Common Questions
+
+**CRITICAL**: When users ask about their activity, work, or what they did, **ALWAYS** use the `workday_recap` tool immediately. Do NOT ask for clarification - infer the mode from context.
+
+**Trigger patterns** (즉시 workday_recap 도구 호출):
+
+1. **Daily patterns** → `mode="daily"`:
+   - 어제/오늘 뭐 했어?, 오늘 작업, 오늘 한 일
+   - 오늘 뭐했나?, 오늘 활동, today, daily
+   - 오늘 리포트, 오늘 정리, 오늘 요약
+
+2. **Weekly patterns** → `mode="weekly"`:
+   - 이번 주 뭐 했어?, 주간 리포트, 주간 정리
+   - 이번주 작업, weekly, this week
+   - 주간 요약, 7일간, 일주일
+
+3. **Detail patterns** → add `include_diff=true`:
+   - 코드 변경, diff, 상세, 자세히
+   - 코드까지, 파일 내용, 변경사항
+   - detailed, with code changes
+
+4. **Timeline patterns** → (included by default):
+   - 시간대별, 타임라인, 언제, when
+   - 시간 분포, 피크 시간, 활동 시간
+
+**Auto-detection rules**:
+- If no time period mentioned → assume "daily"
+- "어제" mentioned → use "daily" (covers yesterday)
+- "지난주" mentioned → use "weekly"
+- Multiple keywords → combine (e.g., "이번 주 코드까지" → weekly + diff)
+
+**Example responses**:
+```
+User: "뭐 했어?"
+→ Immediate call: workday_recap(mode="daily", scan_all_repos=true)
+→ NO clarification questions
+
+User: "오늘 작업 정리해줘"
+→ Immediate call: workday_recap(mode="daily", scan_all_repos=true)
+
+User: "이번 주 코드 변경까지 자세히"
+→ Immediate call: workday_recap(mode="weekly", scan_all_repos=true, include_diff=true)
+
+User: "지난주 뭐했나 시간대별로"
+→ Immediate call: workday_recap(mode="weekly", scan_all_repos=true)
+→ Timeline is automatically included
+```
+
+**Default parameters** (always use these unless user specifies otherwise):
+- `scan_all_repos=true` (scan all Git repos in home directory)
+- `include_diff=false` (unless user asks for code/diff/details)
+
+**Output format**: Present the tool results in a clear, formatted Korean summary including:
+- Git commits with messages and changed files
+- Browser activity with page titles
+- Shell command statistics
+- Hourly timeline with peak hours
+- Work pattern analysis (오전/오후/저녁/밤)

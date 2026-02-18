@@ -374,8 +374,8 @@ def index():
 def api_dashboard():
     """대시보드 데이터 API"""
     try:
-        # Context Engine 초기화
-        context_engine = ContextEngine(lookback_minutes=30)
+        # Context Engine 초기화 (24시간 = 1440분)
+        context_engine = ContextEngine(lookback_minutes=1440)
 
         # 현재 컨텍스트 조회
         context = context_engine.get_current_context(repo_path=".")

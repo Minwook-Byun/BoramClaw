@@ -1,0 +1,465 @@
+#!/usr/bin/env python3
+"""
+BoramClaw 간편 실행 스크립트
+사용법:
+  boram today       # 오늘 작업 리포트 (기본) + 텔레그램 전송
+  boram week        # 이번 주 작업 리포트 + 텔레그램 전송
+  boram today-diff  # 오늘 작업 + 코드 diff + 텔레그램 전송
+  boram week-diff   # 이번 주 + 코드 diff + 텔레그램 전송
+"""
+import sys
+import json
+import subprocess
+import os
+from pathlib import Path
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+# KST 타임존
+KST = ZoneInfo("Asia/Seoul")
+
+TOOL_PATH = Path(__file__).parent / "tools" / "workday_recap.py"
+TELEGRAM_TOOL_PATH = Path(__file__).parent / "tools" / "telegram_send_message.py"
+
+def print_report(mode: str, include_diff: bool = False):
+    """리포트 실행 및 포맷팅"""
+    cmd = [
+        "python3", str(TOOL_PATH),
+        "--tool-input-json", json.dumps({
+            "mode": mode,
+            "scan_all_repos": True,
+            "include_diff": include_diff
+        }),
+        "--tool-context-json", "{}"
+    ]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"❌ 오류: {result.stderr}")
+        sys.exit(1)
+
+    data = json.loads(result.stdout)
+    report = data.get("report", {})
+    sections = report.get("sections", {})
+    timeline = report.get("timeline", {})
+
+    # 헤더 (KST 기준)
+    now = datetime.now(KST)
+    print(f"\n{'='*70}")
+    if mode == "daily":
+        weekday = ["월", "화", "수", "목", "금", "토", "일"][now.weekday()]
+        print(f"📊 {now.month}/{now.day}({weekday}) 작업 회고")
+        print(f"⏰ {now.strftime('%H:%M')} KST")
+    else:
+        week_start = now - timedelta(days=6)
+        print(f"📊 주간 작업 회고 (Week {now.isocalendar()[1]})")
+        print(f"📅 {week_start.strftime('%m/%d')} ~ {now.strftime('%m/%d')}")
+        print(f"⏰ {now.strftime('%H:%M')} KST")
+    print(f"{'='*70}\n")
+
+    # Git
+    if "git" in sections:
+        git = sections["git"]
+        total_commits = git['total_commits']
+
+        if mode == "daily":
+            print(f"💻 개발 활동 (오늘)")
+            print(f"   저장소: {git['repositories']}개 | 커밋: {total_commits}개")
+            print(f"   코드: +{git['insertions']}줄 -{git['deletions']}줄")
+            print(f"   파일: {git.get('files_changed', 0)}개 수정\n")
+
+            # 오늘 커밋 상세
+            for i, c in enumerate(git.get("commits", [])[:5], 1):
+                # KST 시간으로 변환
+                date_str = c.get("date", "")
+                if date_str and "T" in date_str:
+                    try:
+                        dt = datetime.fromisoformat(date_str).astimezone(KST)
+                        time = dt.strftime("%H:%M")
+                    except:
+                        time = date_str.split("T")[1].split("+")[0][:5]
+                else:
+                    time = ""
+
+                files = c.get("files", [])
+                file_count = len(files)
+                print(f"{i}. [{time}] {c.get('message', '')[:60]} ({file_count}개 파일)")
+
+                # 파일 목록
+                if files and len(files) <= 5:
+                    for f in files:
+                        status = f["status"]
+                        icon = {"A": "➕", "M": "✏️", "D": "🗑️"}.get(status, "•")
+                        print(f"      {icon} {f['file']}")
+                elif files:
+                    for f in files[:3]:
+                        status = f["status"]
+                        icon = {"A": "➕", "M": "✏️", "D": "🗑️"}.get(status, "•")
+                        print(f"      {icon} {f['file']}")
+                    print(f"      ... 외 {len(files)-3}개")
+                print()
+
+        else:
+            # Weekly: 요약 + 통계 + 인사이트
+            print(f"💻 개발 활동 (7일간)")
+            print(f"   저장소: {git['repositories']}개")
+            print(f"   총 커밋: {total_commits}개")
+
+            # 생산성 분석
+            avg_per_day = total_commits / 7
+            if avg_per_day >= 3:
+                productivity = "🔥 매우 활발"
+            elif avg_per_day >= 1.5:
+                productivity = "✅ 꾸준함"
+            elif avg_per_day >= 0.5:
+                productivity = "🐢 느림"
+            else:
+                productivity = "😴 거의 없음"
+
+            print(f"   하루 평균: {avg_per_day:.1f}개 ({productivity})")
+            print(f"   코드 변경: +{git['insertions']}줄 -{git['deletions']}줄")
+
+            # 순증감 분석
+            net_change = git['insertions'] - git['deletions']
+            if net_change > 500:
+                print(f"   💡 대규모 기능 추가 (+{net_change}줄)")
+            elif net_change < -500:
+                print(f"   🧹 대규모 리팩토링 (-{abs(net_change)}줄)")
+            elif net_change > 0:
+                print(f"   📈 점진적 성장 (+{net_change}줄)")
+            else:
+                print(f"   ⚖️ 균형잡힌 수정 ({net_change}줄)")
+            print()
+
+            # 일별 활동 분포
+            print("📅 일별 활동 분포:")
+            commits_by_day = {}
+            for c in git.get("commits", []):
+                date = c.get("date", "").split("T")[0] if "T" in c.get("date", "") else ""
+                if date:
+                    if date not in commits_by_day:
+                        commits_by_day[date] = []
+                    commits_by_day[date].append(c)
+
+            sorted_days = sorted(commits_by_day.items(), key=lambda x: x[0], reverse=True)
+            for date, day_commits in sorted_days[:7]:
+                try:
+                    dt_kst = datetime.fromisoformat(day_commits[0]["date"]).astimezone(KST)
+                    day_name = dt_kst.strftime("%m/%d(%a)")
+                except:
+                    day_name = date
+
+                bar = "▓" * min(len(day_commits), 20)
+                print(f"  {day_name}: {bar:<20} {len(day_commits)}개")
+            print()
+
+            # 가장 활발했던 날 TOP 3
+            print("🏆 최고 생산성 TOP 3:")
+            top_days = sorted(commits_by_day.items(), key=lambda x: len(x[1]), reverse=True)[:3]
+            for rank, (date, day_commits) in enumerate(top_days, 1):
+                try:
+                    dt_kst = datetime.fromisoformat(day_commits[0]["date"]).astimezone(KST)
+                    day_name = dt_kst.strftime("%m/%d(%a)")
+                except:
+                    day_name = date
+
+                medal = ["🥇", "🥈", "🥉"][rank-1]
+                print(f"  {medal} {day_name}: {len(day_commits)}개 커밋")
+                for c in day_commits[:2]:
+                    print(f"    • {c['message'][:50]}")
+            print()
+
+    # Timeline + 생산성 패턴
+    if timeline and timeline.get("peak_hour") is not None:
+        peak_hour = timeline['peak_hour']
+        peak_count = timeline['peak_count']
+        active_hours = timeline.get("active_hours", [])
+
+        print(f"⏰ 생산성 패턴")
+        print(f"   피크 시간: {peak_hour:02d}:00 ({peak_count}건)")
+
+        # 시간대별 분류
+        morning = [h for h in active_hours if 6 <= h < 12]
+        afternoon = [h for h in active_hours if 12 <= h < 18]
+        evening = [h for h in active_hours if 18 <= h < 22]
+        night = [h for h in active_hours if h >= 22 or h < 6]
+
+        if mode == "weekly":
+            work_patterns = []
+            if morning:
+                work_patterns.append(f"🌅 오전형 ({len(morning)}시간)")
+            if afternoon:
+                work_patterns.append(f"☀️ 오후형 ({len(afternoon)}시간)")
+            if evening:
+                work_patterns.append(f"🌆 저녁형 ({len(evening)}시간)")
+            if night:
+                work_patterns.append(f"🌙 야간형 ({len(night)}시간)")
+
+            if work_patterns:
+                print(f"   작업 유형: {', '.join(work_patterns)}")
+
+            # 추천
+            if len(evening) + len(night) > len(morning) + len(afternoon):
+                print(f"   💡 야간 작업이 많네요. 수면 패턴 체크!")
+            elif len(morning) > len(afternoon):
+                print(f"   ✨ 오전 집중형! 중요한 일은 오전에!")
+
+        # 시간대별 막대 그래프
+        print()
+        hourly = timeline.get("hourly", {})
+        max_count = max([d.get("total", 0) for d in hourly.values()] or [1])
+        for hour in active_hours:
+            data = hourly.get(str(hour), {})
+            total = data.get("total", 0)
+            bar_width = int((total / max_count) * 40)
+            bar = "█" * bar_width
+            period_icon = "🌅" if 6 <= hour < 12 else "☀️" if 12 <= hour < 18 else "🌆" if 18 <= hour < 22 else "🌙"
+            print(f"   {period_icon} {hour:02d}:00  {bar:<40} {total}건")
+        print()
+
+    # Browser
+    if "browser" in sections:
+        browser = sections["browser"]
+        if mode == "daily":
+            print(f"🌐 웹 활동 (오늘 {browser['total_visits']}개 페이지)")
+            for cluster in browser.get("page_titles", [])[:3]:
+                print(f"   • {cluster['domain']} ({cluster['page_count']}회)")
+                for title in cluster["titles"][:1]:
+                    print(f"     └ {title[:60]}")
+        else:
+            print(f"🌐 웹 활동 (7일간 {browser['total_visits']}개 페이지)")
+            print(f"   하루 평균: {browser['total_visits']/7:.0f}개")
+            for cluster in browser.get("page_titles", [])[:2]:
+                print(f"   • {cluster['domain']} ({cluster['page_count']}회)")
+        print()
+
+    # Shell
+    if "shell" in sections:
+        shell = sections["shell"]
+        if mode == "daily":
+            print(f"🖥️ 터미널 (오늘 {shell['total_commands']}개 명령어)")
+            for cmd in shell.get("top_commands", [])[:5]:
+                print(f"   • {cmd['command']:30s} {cmd['count']}회")
+        else:
+            print(f"🖥️ 터미널 (7일간 {shell['total_commands']}개 명령어)")
+            print(f"   하루 평균: {shell['total_commands']/7:.0f}개")
+            for cmd in shell.get("top_commands", [])[:3]:
+                print(f"   • {cmd['command']:30s} {cmd['count']}회")
+        print()
+
+    # 다음 액션 (Weekly only)
+    if mode == "weekly":
+        print(f"{'='*70}")
+        print("🎯 다음 주 액션")
+        print()
+
+        # Git 기반 추천
+        if "git" in sections:
+            git = sections["git"]
+            avg_commits = git['total_commits'] / 7
+            if avg_commits < 1:
+                print("  • 커밋 빈도 높이기 (작은 단위로 자주)")
+            elif avg_commits > 5:
+                print("  • 커밋 품질 체크 (너무 작게 쪼개지 않았나?)")
+
+            recent_commits = git.get("commits", [])[:10]
+            has_wip = any("WIP" in c.get("message", "").upper() or "TODO" in c.get("message", "").upper() for c in recent_commits)
+            if has_wip:
+                print("  • WIP/TODO 커밋 정리하기")
+
+        # Shell 기반 추천
+        if "shell" in sections:
+            shell = sections["shell"]
+            top_cmds = shell.get("top_commands", [])
+            if any(cmd["command"] in ["pytest", "npm test", "cargo test"] for cmd in top_cmds):
+                print("  • ✅ 테스트 습관 유지 중!")
+            else:
+                print("  • 테스트 작성 고려하기")
+
+        # Browser 기반 추천
+        if "browser" in sections:
+            browser = sections["browser"]
+            if browser['total_visits'] > 300:
+                print("  • 웹 서핑 시간 줄이기 (집중력 향상)")
+
+        # Timeline 기반 추천
+        if timeline and timeline.get("peak_hour"):
+            peak = timeline['peak_hour']
+            if peak < 8 or peak > 22:
+                print("  • 작업 시간 정상화 (건강 우선)")
+
+        print()
+        print("📚 주말 학습 추천:")
+
+        # 프로젝트/기술 스택 감지 및 학습 추천
+        learning_topics = []
+
+        if "git" in sections:
+            git = sections["git"]
+            all_commits = git.get("commits", [])
+            all_messages = " ".join([c.get("message", "") for c in all_commits]).lower()
+
+            # 키워드 기반 프로젝트 감지
+            if "telegram" in all_messages or "bot" in all_messages:
+                learning_topics.append("  • Telegram Bot API 고급 기능 (inline buttons, webhooks)")
+                learning_topics.append("  • 대화형 AI 디자인 패턴")
+
+            if "mcp" in all_messages or "agent" in all_messages:
+                learning_topics.append("  • React Agent 논문 복습 (Planning, Reasoning)")
+                learning_topics.append("  • Multi-Agent 시스템 아키텍처")
+
+            if "queue" in all_messages or "lane" in all_messages or "serialize" in all_messages:
+                learning_topics.append("  • LaneQueue 패턴과 동시성 제어")
+                learning_topics.append("  • Request Serialization 실무 사례")
+
+            if "guardian" in all_messages or "watchdog" in all_messages or "4-tier" in all_messages:
+                learning_topics.append("  • 4-Tier Reliability 아키텍처 심화")
+                learning_topics.append("  • Self-Healing 시스템 설계")
+
+            if "screenpipe" in all_messages or "ocr" in all_messages:
+                learning_topics.append("  • Computer Vision과 OCR 최적화")
+                learning_topics.append("  • 로컬 데이터 압축 알고리즘")
+
+            # 파일 확장자 기반
+            all_files = []
+            for c in all_commits:
+                all_files.extend([f.get("file", "") for f in c.get("files", [])])
+
+            file_exts = {f.split(".")[-1] for f in all_files if "." in f}
+
+            if "py" in file_exts:
+                if "async" in all_messages or "await" in all_messages:
+                    learning_topics.append("  • Python asyncio 고급 패턴")
+
+            if "ts" in file_exts or "tsx" in file_exts:
+                learning_topics.append("  • TypeScript 고급 타입 시스템")
+
+            if "rs" in file_exts:
+                learning_topics.append("  • Rust 소유권과 라이프타임")
+
+        # 학습 주제 출력
+        if learning_topics:
+            for topic in learning_topics[:4]:
+                print(topic)
+        else:
+            print("  • 이번 주 작업한 코드 리뷰 및 리팩토링")
+            print("  • 관련 기술 블로그/논문 읽기")
+
+        print()
+
+    print(f"{'='*70}")
+    if mode == "daily":
+        print("💬 './boram week'으로 주간 회고 보기")
+    else:
+        print("🚀 생산적인 한 주 되세요!")
+    print(f"{'='*70}\n")
+
+    # 텔레그램 전송
+    send_to_telegram(report, mode, include_diff)
+
+
+def send_to_telegram(report: dict, mode: str, include_diff: bool):
+    """리포트를 텔레그램으로 전송"""
+    # .env에서 설정 확인
+    env_file = Path(__file__).parent / ".env"
+    if not env_file.exists():
+        return
+
+    telegram_enabled = False
+    for line in env_file.read_text().split("\n"):
+        line = line.strip()
+        if line.startswith("TELEGRAM_ENABLED=") and not line.startswith("#"):
+            telegram_enabled = line.split("=", 1)[1].strip() == "1"
+            break
+
+    if not telegram_enabled:
+        return
+
+    # 텔레그램용 간략한 메시지 생성
+    period = "오늘" if mode == "daily" else "이번 주"
+    sections = report.get("sections", {})
+
+    lines = [f"📊 {period} 작업 리포트", ""]
+
+    # Git
+    if "git" in sections:
+        git = sections["git"]
+        lines.append(f"💻 개발 활동")
+        lines.append(f"   저장소: {git['repositories']}개 | 커밋: {git['total_commits']}개")
+        lines.append(f"   코드: +{git['insertions']}줄 -{git['deletions']}줄")
+        lines.append("")
+
+        for i, c in enumerate(git.get("commits", [])[:3], 1):
+            date = c["date"].split("T")[0]
+            time = c["date"].split("T")[1].split("+")[0][:5]
+            lines.append(f"{i}. [{c['repo']}] {c['message'][:50]}")
+
+            files = c.get("files", [])
+            if files and len(files) <= 3:
+                for f in files:
+                    status_icon = {"A": "➕", "M": "✏️", "D": "🗑️"}.get(f["status"], "•")
+                    lines.append(f"   {status_icon} {f['file'][:40]}")
+        lines.append("")
+
+    # Timeline
+    timeline = report.get("timeline", {})
+    if timeline and timeline.get("peak_hour") is not None:
+        lines.append(f"⏰ 피크 시간: {timeline['peak_hour']:02d}:00 ({timeline['peak_count']}건)")
+        lines.append("")
+
+    # Browser
+    if "browser" in sections:
+        browser = sections["browser"]
+        lines.append(f"🌐 웹: {browser['total_visits']}개 페이지 방문")
+        for cluster in browser.get("page_titles", [])[:2]:
+            lines.append(f"   • {cluster['domain']} ({cluster['page_count']}회)")
+        lines.append("")
+
+    # Shell
+    if "shell" in sections:
+        shell = sections["shell"]
+        lines.append(f"🖥️ 터미널: {shell['total_commands']}개 명령어")
+        for cmd in shell.get("top_commands", [])[:3]:
+            lines.append(f"   • {cmd['command'][:30]} ({cmd['count']}회)")
+
+    message = "\n".join(lines)
+
+    # 텔레그램 전송
+    try:
+        cmd = [
+            "python3", str(TELEGRAM_TOOL_PATH),
+            "--tool-input-json", json.dumps({"text": message}),
+            "--tool-context-json", "{}"
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print("✅ 텔레그램으로 전송 완료!\n")
+        else:
+            print(f"⚠️  텔레그램 전송 실패: {result.stderr}\n")
+    except Exception as e:
+        print(f"⚠️  텔레그램 전송 오류: {e}\n")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print_report("daily")
+        return
+
+    cmd = sys.argv[1].lower()
+
+    if cmd in ["today", "오늘"]:
+        print_report("daily")
+    elif cmd in ["week", "주간", "이번주"]:
+        print_report("weekly")
+    elif cmd in ["today-diff", "오늘-diff"]:
+        print_report("daily", include_diff=True)
+    elif cmd in ["week-diff", "주간-diff"]:
+        print_report("weekly", include_diff=True)
+    else:
+        print(__doc__)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
