@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boramclaw"
+version = "0.1.0"
+description = "BoramClaw autonomous tool-first agent"
+readme = "CLAUDE.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+boramclaw = "main:main"
+

@@ -1,0 +1,108 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  },
+  "2": {
+    "inputs": {
+      "text": "clean technical system architecture diagram, white background, modern flat infographic style, centered title 'BoramClaw Autonomous Agent', Korean labels, high readability, layered boxes and arrows. Layer 1: User Interface(CLI, Web UI, Telegram). Layer 2: Gateway + ReAct loop(Thought -> Action -> Observation). Layer 3: Tool Router + Dynamic Tool Loader(tools/*.py). Layer 4: Tool Sandbox(filesystem boundary, optional network policy). Side modules: Scheduler + Heartbeat, Watchdog 4-tier self-healing(KeepAlive, Watchdog, Guardian, Emergency LLM Recovery), Memory(short-term + vector long-term), Logs + Metrics + Audit. External services: arXiv, Gmail, Calendar, GitHub, On-chain wallet APIs. crisp typography, balanced spacing, precise arrows, no photorealism",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "3": {
+    "inputs": {
+      "text": "blurry, noisy, low contrast, distorted text, illegible labels, clutter, watermark, logo artifacts, photorealistic people, messy background, dark background",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "4": {
+    "inputs": {
+      "width": 1536,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "5": {
+    "inputs": {
+      "seed": 20260218,
+      "steps": 32,
+      "cfg": 6.5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "2",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "latent_image": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "6": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "boramclaw/architecture",
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}
+

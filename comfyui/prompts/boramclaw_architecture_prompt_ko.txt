@@ -1,0 +1,22 @@
+BoramClaw 시스템 아키텍처 도식, 깔끔한 흰 배경, 모던 플랫 인포그래픽.
+
+제목: "BoramClaw Autonomous Agent"
+
+필수 블록:
+1) 사용자 인터페이스: CLI / Web UI / Telegram
+2) Gateway + ReAct 루프: Thought -> Action -> Observation
+3) Tool Router + Dynamic Tool Loader (tools/*.py)
+4) Tool Sandbox: 파일시스템 경계, 네트워크 정책
+5) Scheduler + Heartbeat
+6) Watchdog 4-Tier: KeepAlive, Watchdog, Guardian, Emergency LLM Recovery
+7) Memory: 단기 메모리 + 벡터 장기 메모리
+8) Logs / Metrics / Audit
+9) 외부 서비스: arXiv, Gmail, Calendar, GitHub, On-chain wallet APIs
+
+요구 사항:
+- 한국어 라벨
+- 박스/화살표 관계가 명확
+- 텍스트 가독성 우선
+- 균형 잡힌 여백
+- 기술 다이어그램 스타일
+

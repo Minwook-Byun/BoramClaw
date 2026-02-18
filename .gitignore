@@ -1,0 +1,6 @@
+.env
+__pycache__/
+logs/
+agent_tools/__pycache__/
+tools/__pycache__/
+schedules/

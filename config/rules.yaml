@@ -1,0 +1,227 @@
+# BoramClaw Rules Engine - 자동 액션 규칙 정의
+# 이 파일을 config/rules.yaml로 복사하여 사용하세요.
+
+# 규칙 활성화 여부
+enabled: true
+
+# 규칙 체크 주기 (초)
+check_interval: 300  # 5분마다
+
+# 규칙 목록
+rules:
+  # 1. 커밋 없이 오래 작업 시 알림
+  - name: no_commit_reminder
+    description: "3시간 이상 코딩 중이지만 커밋이 없을 때 알림"
+    enabled: true
+    priority: high  # high, medium, low
+
+    trigger:
+      type: context_based
+      conditions:
+        - field: session.is_active
+          operator: equals
+          value: true
+        - field: session.duration_minutes
+          operator: greater_than
+          value: 180  # 3시간
+        - field: git.recent_commits
+          operator: equals
+          value: 0
+
+    actions:
+      - type: notification
+        params:
+          title: "💡 커밋 알림"
+          message: "3시간째 커밋이 없습니다. 작업 내용을 커밋하시겠습니까?"
+          sound: "Glass"
+
+      - type: log
+        params:
+          message: "no_commit_reminder triggered"
+          level: "info"
+
+  # 2. 장시간 비활동 시 세션 종료 확인
+  - name: long_inactivity_check
+    description: "30분 이상 비활동 시 세션 종료 확인"
+    enabled: true
+    priority: medium
+
+    trigger:
+      type: inactivity
+      conditions:
+        - field: context.last_activity_minutes_ago
+          operator: greater_than
+          value: 30
+        - field: session.was_active
+          operator: equals
+          value: true
+
+    actions:
+      - type: notification
+        params:
+          title: "😴 세션 종료"
+          message: "30분간 활동이 없습니다. 작업이 끝났나요?"
+          sound: "Tink"
+
+      - type: tool_call
+        params:
+          tool_name: "workday_recap"
+          tool_input:
+            mode: "daily"
+
+  # 3. 반복적인 명령어 Alias 추천
+  - name: frequent_command_alias
+    description: "5회 이상 반복된 긴 명령어에 Alias 추천"
+    enabled: true
+    priority: low
+
+    trigger:
+      type: shell_pattern
+      conditions:
+        - field: shell.top_command_count
+          operator: greater_than
+          value: 5
+        - field: shell.top_command_length
+          operator: greater_than
+          value: 30  # 30자 이상
+
+    actions:
+      - type: notification
+        params:
+          title: "⚡ Alias 추천"
+          message: "자주 사용하는 긴 명령어가 있습니다. Alias를 만드시겠습니까?"
+          sound: "Ping"
+
+  # 4. 브라우저에서 오래 리서치 중일 때
+  - name: research_to_coding_reminder
+    description: "1시간 이상 브라우저 리서치 중일 때 코딩 시작 권장"
+    enabled: true
+    priority: medium
+
+    trigger:
+      type: context_based
+      conditions:
+        - field: context.primary_activity
+          operator: equals
+          value: "research"
+        - field: session.duration_minutes
+          operator: greater_than
+          value: 60
+        - field: shell.recent_coding_commands
+          operator: equals
+          value: 0
+
+    actions:
+      - type: notification
+        params:
+          title: "💻 코딩 시작"
+          message: "1시간째 리서치 중입니다. 코딩을 시작해볼까요?"
+          sound: "Hero"
+
+  # 5. 매일 오후 9시 일일 리포트
+  - name: daily_recap_9pm
+    description: "매일 오후 9시에 일일 리포트 자동 생성"
+    enabled: true
+    priority: high
+
+    trigger:
+      type: time_based
+      schedule:
+        time: "21:00"
+        days: ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+    actions:
+      - type: tool_call
+        params:
+          tool_name: "daily_recap_notifier"
+          tool_input: {}
+
+  # 6. 프로젝트 전환 감지
+  - name: project_switch_detection
+    description: "프로젝트 전환 시 이전 프로젝트 커밋 확인"
+    enabled: false  # 실험적 기능
+    priority: medium
+
+    trigger:
+      type: context_change
+      conditions:
+        - field: git.repo_changed
+          operator: equals
+          value: true
+        - field: git.previous_repo_uncommitted_changes
+          operator: equals
+          value: true
+
+    actions:
+      - type: notification
+        params:
+          title: "🔄 프로젝트 전환"
+          message: "이전 프로젝트에 커밋하지 않은 변경사항이 있습니다."
+          sound: "Sosumi"
+
+  # 7. 집중 시간 추적
+  - name: focus_time_tracker
+    description: "2시간 집중 작업 후 휴식 권장"
+    enabled: true
+    priority: medium
+
+    trigger:
+      type: context_based
+      conditions:
+        - field: session.is_active
+          operator: equals
+          value: true
+        - field: session.duration_minutes
+          operator: greater_than
+          value: 120
+        - field: session.last_break_minutes_ago
+          operator: greater_than
+          value: 120
+
+    actions:
+      - type: notification
+        params:
+          title: "☕ 휴식 시간"
+          message: "2시간째 작업 중입니다. 잠시 휴식하세요!"
+          sound: "Glass"
+
+  # 8. 심야 작업 알림
+  - name: late_night_warning
+    description: "새벽 2시 이후 작업 시 수면 권장"
+    enabled: true
+    priority: high
+
+    trigger:
+      type: time_based
+      schedule:
+        time: "02:00"
+        condition: session_active
+
+    actions:
+      - type: notification
+        params:
+          title: "🌙 수면 권장"
+          message: "새벽 2시입니다. 내일을 위해 휴식하세요."
+          sound: "Submarine"
+
+# 조건 연산자:
+# - equals: 같음
+# - not_equals: 다름
+# - greater_than: 초과
+# - less_than: 미만
+# - greater_than_or_equal: 이상
+# - less_than_or_equal: 이하
+# - contains: 포함
+# - not_contains: 불포함
+
+# 액션 타입:
+# - notification: macOS 알림
+# - tool_call: BoramClaw 툴 실행
+# - log: 로그 기록
+# - shell: Shell 명령 실행
+# - webhook: Webhook 호출
+
+# 우선순위:
+# - high: 즉시 실행
+# - medium: 다음 체크 주기에 실행
+# - low: 백그라운드 실행
