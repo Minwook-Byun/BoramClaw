@@ -18,12 +18,16 @@ import logging
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+from runtime_commands import parse_deep_weekly_quick_request
 
 # KST 타임존
 KST = ZoneInfo("Asia/Seoul")
 
 # 프로젝트 루트
 PROJECT_ROOT = Path(__file__).parent
+
+# 대기 중인 메시지 (chat_id별로 분할된 메시지 목록)
+pending_messages = {}
 
 # 로깅 설정
 logging.basicConfig(
@@ -78,6 +82,40 @@ def get_updates(bot_token: str, offset: int = 0, timeout: int = 30):
     return []
 
 
+# 긴 메시지 분할 (텔레그램 4096자 제한)
+def split_message(text: str, max_length: int = 4000):
+    """
+    긴 메시지를 4096자 제한에 맞춰 분할
+    max_length=4000 (안전 마진)
+    """
+    if len(text) <= max_length:
+        return [text]
+
+    parts = []
+    lines = text.split("\n")
+    current_part = []
+    current_length = 0
+
+    for line in lines:
+        line_length = len(line) + 1  # \n 포함
+
+        if current_length + line_length > max_length:
+            # 현재 파트 저장
+            if current_part:
+                parts.append("\n".join(current_part))
+            current_part = [line]
+            current_length = line_length
+        else:
+            current_part.append(line)
+            current_length += line_length
+
+    # 마지막 파트
+    if current_part:
+        parts.append("\n".join(current_part))
+
+    return parts
+
+
 # 텔레그램 메시지 전송
 def send_message(bot_token: str, chat_id: str, text: str):
     import urllib.request
@@ -102,9 +140,21 @@ def parse_command(text: str):
     텍스트에서 명령어 추출
 
     Returns:
-        (mode, include_diff) or None
+        ("more", None) for "이어서" commands
+        ("deep_weekly", days_back) for deep weekly retrospective
+        (mode, include_diff) for daily/weekly report commands
+        None for unknown commands
     """
     text_lower = text.lower()
+
+    # "이어서" 명령 감지
+    if any(keyword in text_lower for keyword in ["이어서", "더보기", "계속", "more", "next"]):
+        return "more", None
+
+    # 깊이 있는 주간 회고 감지 (runtime_commands와 동일 규칙 사용)
+    deep_weekly_input = parse_deep_weekly_quick_request(text)
+    if deep_weekly_input is not None:
+        return "deep_weekly", int(deep_weekly_input.get("days_back", 7))
 
     # 모드 감지
     mode = None
@@ -143,6 +193,30 @@ def run_report(mode: str, include_diff: bool):
             return data.get("report")
     except Exception as e:
         logger.warning(f"리포트 실행 오류: {e}")
+
+    return None
+
+
+def run_deep_weekly(days_back: int):
+    """deep_weekly_retrospective 실행 및 결과 반환"""
+    tool_path = PROJECT_ROOT / "tools" / "deep_weekly_retrospective.py"
+
+    cmd = [
+        "python3", str(tool_path),
+        "--tool-input-json", json.dumps({"days_back": days_back}),
+        "--tool-context-json", json.dumps({"workdir": str(PROJECT_ROOT)})
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            if isinstance(data, dict):
+                return data
+            return None
+        logger.warning(f"deep_weekly_retrospective 실행 실패: returncode={result.returncode}, stderr={result.stderr[:200]}")
+    except Exception as e:
+        logger.warning(f"deep_weekly_retrospective 실행 오류: {e}")
 
     return None
 
@@ -188,7 +262,7 @@ def format_report(report: dict, mode: str):
             # 오늘 커밋 상세 (최대 5개)
             for i, c in enumerate(git.get("commits", [])[:5], 1):
                 repo = c.get("repo", "")
-                msg = c.get("message", "")[:50]
+                msg = c.get("message", "")[:60]  # 60자로 늘림
 
                 # KST 시간으로 변환
                 date_str = c.get("date", "")
@@ -201,24 +275,26 @@ def format_report(report: dict, mode: str):
                 else:
                     time = ""
 
-                # 파일 수 추가
+                # 파일 정보
                 files = c.get("files", [])
                 file_count = len(files)
                 lines.append(f"{i}. [{time}] {msg} ({file_count}개 파일)")
 
-                # 파일 목록 (최대 3개)
-                if files and len(files) <= 3:
+                # 파일 목록 (맥 터미널처럼 자세하게)
+                if files and len(files) <= 5:
+                    # 5개 이하: 전체 표시
                     for f in files:
                         status = f["status"]
                         icon = {"A": "➕", "M": "✏️", "D": "🗑️"}.get(status, "•")
-                        lines.append(f"   {icon} {f['file'][:40]}")
+                        lines.append(f"      {icon} {f['file']}")
                 elif files:
-                    # 3개 초과시 대표 파일만
-                    for f in files[:2]:
+                    # 6개 이상: 3개만 + "...외 N개"
+                    for f in files[:3]:
                         status = f["status"]
                         icon = {"A": "➕", "M": "✏️", "D": "🗑️"}.get(status, "•")
-                        lines.append(f"   {icon} {f['file'][:40]}")
-                    lines.append(f"   ... 외 {len(files)-2}개")
+                        lines.append(f"      {icon} {f['file']}")
+                    lines.append(f"      ... 외 {len(files)-3}개")
+                lines.append("")
         else:
             # Weekly: 요약 + 통계 + 인사이트
             lines.append(f"💻 개발 활동 (7일간)")
@@ -557,12 +633,89 @@ def listen_loop():
                         "사용 가능한 명령어:\n"
                         "• 오늘 / today\n"
                         "• 이번 주 / week\n"
+                        "• 이번 주 깊이 있는 회고 작성해줘\n"
+                        "• 지난 14일 깊은 회고 생성해줘\n"
                         "• 오늘 상세히 / today diff\n"
-                        "• 이번 주 코드까지 / week diff"
+                        "• 이번 주 코드까지 / week diff\n"
+                        "• 이어서 / 더보기 (긴 메시지 계속 보기)"
                     )
                     continue
 
-                mode, include_diff = parsed
+                mode, command_arg = parsed
+
+                # "이어서" 명령 처리
+                if mode == "more":
+                    if chat_id in pending_messages and pending_messages[chat_id]:
+                        # 다음 메시지 전송
+                        next_part = pending_messages[chat_id].pop(0)
+
+                        # 마지막 메시지가 아니면 "이어서" 안내 추가
+                        if pending_messages[chat_id]:
+                            next_part += f"\n\n📎 이어서 보기: '이어서' 입력 ({len(pending_messages[chat_id])}개 남음)"
+
+                        send_message(bot_token, chat_id, next_part)
+                        logger.info(f"   ✅ 이어서 전송 완료 (남은 메시지: {len(pending_messages[chat_id])})\n")
+                    else:
+                        send_message(bot_token, chat_id, "📭 이어서 볼 내용이 없습니다.")
+                    continue
+
+                # 깊이 있는 주간 회고 처리
+                if mode == "deep_weekly":
+                    days_back = int(command_arg or 7)
+                    send_message(bot_token, chat_id, f"⏳ 최근 {days_back}일 깊은 주간 회고 생성 중...")
+                    logger.info(f"   → 깊은 회고 생성: days_back={days_back}")
+                    deep_result = run_deep_weekly(days_back)
+                    if not deep_result or not deep_result.get("success"):
+                        logger.error("   ❌ 깊은 회고 생성 실패")
+                        send_message(bot_token, chat_id, "❌ 깊은 주간 회고 생성 실패")
+                        continue
+
+                    output_file = str(deep_result.get("output_file", ""))
+                    char_count = int(deep_result.get("char_count", 0) or 0)
+                    summary = deep_result.get("summary", {})
+                    prompts = int(summary.get("prompts", 0) or 0) if isinstance(summary, dict) else 0
+                    commits = int(summary.get("commits", 0) or 0) if isinstance(summary, dict) else 0
+                    sections = int(summary.get("sections", 0) or 0) if isinstance(summary, dict) else 0
+
+                    report_body = ""
+                    if output_file:
+                        out_path = Path(output_file)
+                        if out_path.exists():
+                            try:
+                                report_body = out_path.read_text(encoding="utf-8")
+                            except Exception as e:
+                                logger.warning(f"   ⚠️ 회고 파일 읽기 실패: {e}")
+
+                    header_lines = [
+                        "✅ 깊은 주간 회고 생성 완료",
+                        f"📅 기간: 최근 {days_back}일",
+                        f"📝 분량: {char_count:,}자",
+                        f"📊 데이터: 프롬프트 {prompts}개 / 커밋 {commits}개 / 섹션 {sections}개",
+                    ]
+                    if output_file:
+                        header_lines.append(f"📁 파일: {Path(output_file).name}")
+
+                    if report_body.strip():
+                        full_text = "\n".join(header_lines) + "\n\n━━━━━━━━━━━━━━━━━━━━━━\n📄 회고 본문\n\n" + report_body
+                    else:
+                        full_text = "\n".join(header_lines) + "\n\n⚠️ 본문을 읽지 못했습니다. 로컬 파일을 확인해주세요."
+
+                    parts = split_message(full_text, max_length=3800)
+                    if len(parts) == 1:
+                        send_message(bot_token, chat_id, parts[0])
+                        logger.info("   ✅ 깊은 회고 결과 전송 완료 (1개 파트)\n")
+                    else:
+                        first_part = parts[0] + f"\n\n📎 이어서 보기: '이어서' 입력 ({len(parts)-1}개 남음)"
+                        success = send_message(bot_token, chat_id, first_part)
+                        if success:
+                            pending_messages[chat_id] = parts[1:]
+                            logger.info(f"   ✅ 깊은 회고 첫 부분 전송 완료 (총 {len(parts)}개 파트)\n")
+                        else:
+                            logger.error("   ❌ 깊은 회고 첫 부분 전송 실패\n")
+                    continue
+
+                include_diff = bool(command_arg)
+
                 period_text = "오늘" if mode == "daily" else "이번 주"
 
                 # "처리 중..." 메시지
@@ -577,15 +730,30 @@ def listen_loop():
                     send_message(bot_token, chat_id, "❌ 리포트 생성 실패")
                     continue
 
-                # 결과 전송
+                # 결과 포맷팅
                 formatted = format_report(report, mode)
                 logger.info(f"   → 메시지 길이: {len(formatted)} 문자")
-                success = send_message(bot_token, chat_id, formatted)
 
-                if success:
-                    logger.info(f"   ✅ 응답 전송 완료\n")
+                # 메시지 분할 (4096자 제한)
+                parts = split_message(formatted, max_length=4000)
+
+                if len(parts) == 1:
+                    # 짧은 메시지: 한 번에 전송
+                    success = send_message(bot_token, chat_id, parts[0])
+                    if success:
+                        logger.info(f"   ✅ 응답 전송 완료\n")
+                    else:
+                        logger.error(f"   ❌ 응답 전송 실패\n")
                 else:
-                    logger.error(f"   ❌ 응답 전송 실패\n")
+                    # 긴 메시지: 첫 부분만 전송, 나머지는 pending에 저장
+                    first_part = parts[0] + f"\n\n📎 이어서 보기: '이어서' 입력 ({len(parts)-1}개 남음)"
+                    success = send_message(bot_token, chat_id, first_part)
+
+                    if success:
+                        pending_messages[chat_id] = parts[1:]
+                        logger.info(f"   ✅ 첫 부분 전송 완료 (총 {len(parts)}개 파트)\n")
+                    else:
+                        logger.error(f"   ❌ 응답 전송 실패\n")
 
         except Exception as e:
             print(f"⚠️  예외 발생: {e}")

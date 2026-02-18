@@ -45,6 +45,7 @@ def format_tool_list(executor: Any) -> str:
     )
     lines.append("스케줄 목록 예시: /schedules")
     lines.append("arXiv 일일 스케줄 예시: /schedule-arxiv 08:00 deepseek llm")
+    lines.append("깊은 주간 회고 예시: 이번 주 깊이 있는 회고 작성해줘")
     lines.append("Semantic snapshot 예시: /tool semantic_web_snapshot {\"url\":\"https://arxiv.org\"}")
     lines.append("온체인 조회 예시: /tool onchain_wallet_snapshot {\"network\":\"ethereum\",\"address\":\"0x...\"}")
     lines.append("텔레그램 전송 예시: /tool telegram_send_message {\"text\":\"안녕하세요\"}")
@@ -287,6 +288,62 @@ def parse_arxiv_quick_request(text: str) -> dict[str, Any] | None:
     if keywords:
         payload["keywords"] = keywords
     return payload
+
+
+def parse_deep_weekly_quick_request(text: str) -> dict[str, Any] | None:
+    normalized = text.strip()
+    if not normalized:
+        return None
+
+    lowered = normalized.lower()
+    explicit_tokens = (
+        "deep_weekly_retrospective",
+        "deep weekly retrospective",
+        "딥 위클리",
+        "깊은 주간 회고",
+        "깊이 있는 주간 회고",
+    )
+    retrospective_tokens = ("회고", "retrospective", "리트로")
+    depth_tokens = ("깊", "deep", "상세", "디테일", "길게", "1만자", "롱폼")
+    action_tokens = (
+        "해줘",
+        "작성",
+        "만들",
+        "생성",
+        "정리",
+        "요약",
+        "출력",
+        "보여",
+        "돌려",
+        "실행",
+        "run",
+        "generate",
+    )
+
+    has_explicit = any(token in lowered for token in explicit_tokens)
+    has_retrospective = any(token in lowered for token in retrospective_tokens)
+    has_depth = any(token in lowered for token in depth_tokens)
+    has_action = any(token in lowered for token in action_tokens)
+    if not has_explicit and not (has_retrospective and has_depth and has_action):
+        return None
+
+    days_back = 7
+    days_match = re.search(r"(\d+)\s*(일|days?)", normalized, re.IGNORECASE)
+    weeks_match = re.search(r"(\d+)\s*(주|weeks?)", normalized, re.IGNORECASE)
+    if days_match:
+        try:
+            days_back = int(days_match.group(1))
+        except ValueError:
+            days_back = 7
+    elif weeks_match:
+        try:
+            days_back = int(weeks_match.group(1)) * 7
+        except ValueError:
+            days_back = 7
+    elif "지난주" in normalized or "이번 주" in normalized or "이번주" in normalized:
+        days_back = 7
+
+    return {"days_back": max(1, min(days_back, 90))}
 
 
 def summarize_for_memory(text: str, max_chars: int = 220) -> str:

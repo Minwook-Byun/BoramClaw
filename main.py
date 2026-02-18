@@ -31,6 +31,7 @@ from runtime_commands import (
     is_schedule_list_request,
     is_tool_list_request,
     parse_arxiv_quick_request,
+    parse_deep_weekly_quick_request,
     parse_context_command,
     parse_delegate_command,
     parse_feedback_command,
@@ -2261,10 +2262,26 @@ def main() -> None:
                         on_tool_event("arxiv_daily_digest", quick_arxiv_input, result_text, is_error)
                         answer = result_text
                     else:
-                        delegate_input = parse_delegate_command(prompt)
-                        delegated_turn = delegate_input is not None or multi_agent_auto_route
-                        model_prompt = delegate_input if delegate_input is not None else prompt
-                        answer, _ = run_chat_turn(prompt_text=model_prompt, delegated=delegated_turn)
+                        quick_deep_weekly_input = parse_deep_weekly_quick_request(prompt)
+                        if quick_deep_weekly_input is not None:
+                            if not has_tool("deep_weekly_retrospective"):
+                                answer = "deep_weekly_retrospective 도구가 없습니다."
+                            else:
+                                result_text, is_error = tools.run_tool(
+                                    "deep_weekly_retrospective", quick_deep_weekly_input
+                                )
+                                on_tool_event(
+                                    "deep_weekly_retrospective",
+                                    quick_deep_weekly_input,
+                                    result_text,
+                                    is_error,
+                                )
+                                answer = result_text
+                        else:
+                            delegate_input = parse_delegate_command(prompt)
+                            delegated_turn = delegate_input is not None or multi_agent_auto_route
+                            model_prompt = delegate_input if delegate_input is not None else prompt
+                            answer, _ = run_chat_turn(prompt_text=model_prompt, delegated=delegated_turn)
 
                 if (
                     "도구 호출 루프가 제한 횟수를 초과" in answer
@@ -2655,6 +2672,16 @@ def main() -> None:
                 on_tool_event("arxiv_daily_digest", quick_arxiv_input, result_text, is_error)
                 answer = result_text
                 emit_answer(answer)
+                continue
+
+            quick_deep_weekly_input = parse_deep_weekly_quick_request(user_input)
+            if delegate_input is None and quick_deep_weekly_input is not None:
+                if not has_tool("deep_weekly_retrospective"):
+                    emit_answer("deep_weekly_retrospective 도구가 없습니다.")
+                else:
+                    result_text, is_error = tools.run_tool("deep_weekly_retrospective", quick_deep_weekly_input)
+                    on_tool_event("deep_weekly_retrospective", quick_deep_weekly_input, result_text, is_error)
+                    emit_answer(result_text)
                 continue
 
             answer, schema_report = run_chat_turn(prompt_text=model_prompt, delegated=delegated_turn)
