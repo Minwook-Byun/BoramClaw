@@ -1,0 +1,262 @@
+{
+  "_comment": "16주 ML 학습 커리큘럼 — workday_recap & weekly_retrospective에서 진도 자동 체크",
+  "start_date": "2026-02-23",
+  "total_weeks": 16,
+  "daily_hours": 3,
+  "phases": [
+    {
+      "phase": 1,
+      "name": "Transformer 해부",
+      "goal": "모델이 왜 GPU 메모리를 먹는지 이해",
+      "weeks": [
+        {
+          "week": 1,
+          "topic": "Attention 구조",
+          "paper": "Attention Is All You Need (Vaswani, 2017)",
+          "goal": "Q, K, V는 왜 필요한가? O(n²) 복잡도는 왜 발생하는가?",
+          "deliverable": "self-attention 수식 손으로 정리",
+          "keywords": [
+            "self-attention", "self attention", "multi-head attention", "multihead attention",
+            "qkv", "q k v", "query key value", "scaled dot product",
+            "transformer architecture", "vaswani", "attention head",
+            "어텐션 메커니즘", "셀프어텐션", "멀티헤드", "트랜스포머 구조",
+            "attention weight", "attention score", "o(n^2)", "attention is all you need",
+            "positional encoding", "포지셔널 인코딩"
+          ]
+        },
+        {
+          "week": 2,
+          "topic": "Scaling Laws",
+          "paper": "Scaling Laws for Neural Language Models (Kaplan, 2020)",
+          "goal": "모델 크기 vs 데이터 vs compute 관계. 왜 큰 모델이 계속 나오는가?",
+          "deliverable": "파라미터 수 증가가 VRAM에 미치는 영향 계산",
+          "keywords": [
+            "scaling law", "scaling laws", "kaplan", "compute", "flop",
+            "parameter", "파라미터", "데이터 크기", "모델 크기",
+            "vram", "gpu memory", "gpu 메모리", "loss curve",
+            "chinchilla", "emergent", "이머전트", "스케일링",
+            "token", "토큰 수", "학습 데이터"
+          ]
+        },
+        {
+          "week": 3,
+          "topic": "FlashAttention",
+          "paper": "FlashAttention (Dao, 2022)",
+          "goal": "메모리 병목을 어떻게 줄였는가? GPU에서 메모리 IO가 왜 병목인가?",
+          "deliverable": "naive attention vs flash 차이 요약",
+          "keywords": [
+            "flashattention", "flash attention", "dao", "memory io",
+            "bandwidth", "hbm", "sram", "tiling", "recomputation",
+            "memory bandwidth", "io bound", "memory bound",
+            "메모리 병목", "플래시어텐션", "타일링", "재계산",
+            "naive attention", "fused kernel", "cuda kernel"
+          ]
+        },
+        {
+          "week": 4,
+          "topic": "KV Cache",
+          "paper": "GPT inference 블로그 + KV cache 기술 설명",
+          "goal": "왜 대화 길어질수록 느려지는가?",
+          "deliverable": "KV cache 메모리 증가 구조 도식화",
+          "keywords": [
+            "kv cache", "key value cache", "kv캐시", "inference",
+            "autoregressive", "prefill", "decode", "generation",
+            "context length", "시퀀스 길이", "컨텍스트", "추론",
+            "cached", "token generation", "latency", "throughput",
+            "메모리 증가", "디코딩", "오토리그레시브"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "학습 & 파인튜닝 구조",
+      "goal": "효율적인 학습 방법론 이해",
+      "weeks": [
+        {
+          "week": 5,
+          "topic": "LoRA",
+          "paper": "LoRA (Hu et al., 2021)",
+          "goal": "전체 파라미터를 왜 안 바꾸는가? 저랭크 행렬이 왜 가능한가?",
+          "deliverable": "LoRA가 메모리를 줄이는 구조 설명",
+          "keywords": [
+            "lora", "low rank", "low-rank", "rank decomposition",
+            "adapter", "fine-tuning", "파인튜닝", "저랭크",
+            "rank r", "delta w", "intrinsic rank", "hu et al",
+            "로라", "어댑터", "행렬 분해", "trainable parameter",
+            "frozen", "weight update", "파라미터 효율"
+          ]
+        },
+        {
+          "week": 6,
+          "topic": "QLoRA",
+          "paper": "QLoRA (Dettmers, 2023)",
+          "goal": "4bit 양자화가 왜 가능한가? quantization이 추론 속도에 미치는 영향",
+          "deliverable": "16bit vs 4bit VRAM 비교 계산",
+          "keywords": [
+            "qlora", "quantization", "4bit", "4-bit", "nf4",
+            "bfloat16", "bf16", "fp16", "int8", "dettmers",
+            "양자화", "큐로라", "double quantization", "paged optimizer",
+            "bitsandbytes", "bnb", "mixed precision", "정밀도",
+            "vram 절감", "메모리 절약", "16bit vs 4bit"
+          ]
+        },
+        {
+          "week": 7,
+          "topic": "RLHF",
+          "paper": "InstructGPT (Ouyang, 2022)",
+          "goal": "인간 피드백이 어디에 들어가는가? alignment 구조 이해",
+          "deliverable": "SFT vs RLHF 차이 정리",
+          "keywords": [
+            "rlhf", "reinforcement learning from human feedback",
+            "instructgpt", "ouyang", "reward model", "ppo",
+            "sft", "supervised fine-tuning", "alignment",
+            "인간 피드백", "보상 모델", "정렬", "알엘에이치에프",
+            "preference", "human preference", "constitutional ai",
+            "dpo", "direct preference optimization"
+          ]
+        },
+        {
+          "week": 8,
+          "topic": "Mixture of Experts",
+          "paper": "Switch Transformer (Fedus, 2021)",
+          "goal": "왜 모든 파라미터를 동시에 쓰지 않는가? MoE가 비용을 줄이는 방식 이해",
+          "deliverable": "Dense vs MoE compute 비교",
+          "keywords": [
+            "mixture of experts", "moe", "switch transformer",
+            "fedus", "expert", "router", "gating", "sparse",
+            "전문가 혼합", "믹스처 오브 엑스퍼트", "라우터", "스파스",
+            "active parameter", "dense vs moe", "conditional compute",
+            "mixtral", "grok", "sparse activation"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "Inference & Serving 구조",
+      "goal": "프로덕션 서빙 구조 이해",
+      "weeks": [
+        {
+          "week": 9,
+          "topic": "PagedAttention",
+          "paper": "vLLM: PagedAttention (2023)",
+          "goal": "KV cache fragmentation 해결 방식. 동시 요청 처리 구조 이해",
+          "deliverable": "naive serving vs vLLM 차이 정리",
+          "keywords": [
+            "pagedattention", "paged attention", "vllm", "fragmentation",
+            "continuous batching", "dynamic batching", "memory pool",
+            "페이지드어텐션", "브이엘엘엠", "메모리 단편화",
+            "throughput", "concurrent request", "동시 요청",
+            "kv cache block", "logical block", "physical block"
+          ]
+        },
+        {
+          "week": 10,
+          "topic": "DeepSpeed ZeRO",
+          "paper": "ZeRO (Rajbhandari, 2020)",
+          "goal": "파라미터를 어떻게 분산시키는가? multi-GPU 메모리 분산 이해",
+          "deliverable": "ZeRO Stage 1/2/3 비교",
+          "keywords": [
+            "zero", "deepspeed", "rajbhandari", "zero-1", "zero-2", "zero-3",
+            "stage 1", "stage 2", "stage 3", "optimizer state",
+            "gradient partition", "parameter partition",
+            "데이터 병렬", "모델 분산", "제로", "딥스피드",
+            "multi-gpu", "멀티 gpu", "메모리 분산"
+          ]
+        },
+        {
+          "week": 11,
+          "topic": "Tensor Parallelism",
+          "paper": "Megatron-LM 문서",
+          "goal": "모델을 어떻게 GPU 여러 장에 나누는가? 병렬 전략 3종 비교",
+          "deliverable": "데이터/텐서/파이프라인 병렬화 비교",
+          "keywords": [
+            "tensor parallelism", "tensor parallel", "megatron",
+            "pipeline parallelism", "data parallelism",
+            "model parallel", "column parallel", "row parallel",
+            "텐서 병렬", "파이프라인 병렬", "메가트론", "병렬화",
+            "gpu 여러 장", "샤딩", "sharding", "allreduce"
+          ]
+        },
+        {
+          "week": 12,
+          "topic": "Cost Modeling",
+          "paper": "AWS GPU pricing + token cost 계산",
+          "goal": "API vs self-host 비교. 회사 AX 비용 모델 설계표",
+          "deliverable": "GPU 인스턴스 비용 vs API 비용 계산표",
+          "keywords": [
+            "cost", "pricing", "api cost", "self-host", "self host",
+            "gpu cost", "a100", "h100", "p3", "g5", "inference cost",
+            "비용", "가격", "셀프호스팅", "토큰 비용", "비용 계산",
+            "aws", "gcp", "azure", "on-premise", "온프레미스",
+            "tco", "total cost", "roi", "api vs"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "시스템 레벨 사고",
+      "goal": "전체 아키텍처 설계 능력 획득",
+      "weeks": [
+        {
+          "week": 13,
+          "topic": "RAG",
+          "paper": "RAG (Lewis, 2020)",
+          "goal": "retrieval이 왜 hallucination 줄이는가?",
+          "deliverable": "RAG vs Fine-tuning 비교",
+          "keywords": [
+            "rag", "retrieval augmented generation", "lewis",
+            "vector store", "embedding", "retrieval", "hallucination",
+            "환각", "검색 증강", "래그", "벡터 스토어", "임베딩",
+            "faiss", "chroma", "pinecone", "dense retrieval",
+            "semantic search", "chunk", "chunking"
+          ]
+        },
+        {
+          "week": 14,
+          "topic": "ReAct",
+          "paper": "ReAct (Yao, 2022)",
+          "goal": "agent loop 구조 이해",
+          "deliverable": "ReAct vs Chain-of-Thought 비교",
+          "keywords": [
+            "react", "reasoning acting", "yao", "agent loop",
+            "thought action observation", "chain of thought", "cot",
+            "에이전트 루프", "리액트", "추론 행동", "관찰",
+            "tool use", "tool call", "function call", "agentic",
+            "scratchpad", "self-ask", "plan and execute"
+          ]
+        },
+        {
+          "week": 15,
+          "topic": "Tool Use & Planning",
+          "paper": "Toolformer (Schick, 2023)",
+          "goal": "모델이 tool을 학습하는 방식 이해",
+          "deliverable": "Tool-augmented LM 구조 설명",
+          "keywords": [
+            "toolformer", "schick", "tool learning", "api call",
+            "function calling", "tool augmented", "planning",
+            "코드 실행", "도구 학습", "툴포머",
+            "openai function", "anthropic tool", "structured output",
+            "json schema", "grounding", "code interpreter"
+          ]
+        },
+        {
+          "week": 16,
+          "topic": "전체 설계 통합",
+          "paper": "우리 회사 AX self-host 아키텍처 설계",
+          "goal": "GPU 수, VRAM, 비용, latency 계산 포함 아키텍처 설계서 작성",
+          "deliverable": "AX self-host 아키텍처 설계서 (GPU/VRAM/비용/latency)",
+          "keywords": [
+            "architecture", "아키텍처", "설계서", "self-host",
+            "gpu 수", "vram 계산", "latency", "레이턴시",
+            "end-to-end", "production", "프로덕션", "배포",
+            "serving stack", "mlops", "llmops", "inference server",
+            "전체 설계", "통합", "ax 아키텍처"
+          ]
+        }
+      ]
+    }
+  ]
+}

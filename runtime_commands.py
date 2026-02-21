@@ -5,6 +5,33 @@ import os
 import re
 from typing import Any
 
+VC_PRIMARY_SUBCOMMANDS: tuple[str, ...] = (
+    "register",
+    "bind-folder",
+    "collect",
+    "report",
+    "verify",
+    "onboard",
+    "pending",
+    "approve",
+    "reject",
+    "status",
+    "scope",
+    "scope-audit",
+    "dashboard",
+    "help",
+)
+
+INTEGRATION_PRIMARY_SUBCOMMANDS: tuple[str, ...] = (
+    "connect",
+    "exchange",
+    "refresh",
+    "test",
+    "status",
+    "revoke",
+    "help",
+)
+
 
 def is_tool_list_request(text: str) -> bool:
     normalized = text.strip().lower()
@@ -49,7 +76,84 @@ def format_tool_list(executor: Any) -> str:
     lines.append("Semantic snapshot 예시: /tool semantic_web_snapshot {\"url\":\"https://arxiv.org\"}")
     lines.append("온체인 조회 예시: /tool onchain_wallet_snapshot {\"network\":\"ethereum\",\"address\":\"0x...\"}")
     lines.append("텔레그램 전송 예시: /tool telegram_send_message {\"text\":\"안녕하세요\"}")
+    lines.append("VC 수집 예시: /vc collect acme 7d")
+    lines.append("VC 자동검증 예시: /vc verify acme")
+    lines.append("VC 스코프 정책 예시: /vc scope acme")
+    lines.append("VC 대시보드 예시: /vc dashboard acme 30d")
+    lines.append("VC 도움말: /vc help")
+    lines.append("VC 승인 예시: /vc approve <approval_id>")
+    lines.append("Integration 연결 예시: /integration connect acme google_drive")
+    lines.append("Integration 상태 예시: /integration status acme")
+    lines.append("Integration 도움말: /integration help")
     lines.append("재동기화 예시: /sync-tools")
+    return "\n".join(lines)
+
+
+def format_vc_help() -> str:
+    lines = [
+        "VC 수집 기능 사용법",
+        "",
+        "1) 초기 등록",
+        "- /vc help",
+        "- /vc register <startup_id> <display_name>",
+        "- /vc bind-folder <startup_id> <gateway_url> <folder_alias>",
+        "",
+        "2) 수집/리포트",
+        "- /vc collect <startup_id> <today|7d|30d>",
+        "- /vc report <startup_id> <daily|weekly|range:YYYY-MM-DD,YYYY-MM-DD>",
+        "- /vc verify [startup_id]",
+        "- /vc onboard <startup_id> [today|7d]",
+        "- /vc status <startup_id>",
+        "- /vc dashboard [startup_id] [7d|30d|90d]",
+        "",
+        "3) 승인 게이트",
+        "- /vc pending [startup_id]",
+        "- /vc approve <approval_id> [force] [by=<approver>]",
+        "- /vc reject <approval_id> [reason]",
+        "",
+        "4) 동의 범위 정책",
+        "- /vc scope <startup_id>",
+        "- /vc scope <startup_id> allow=<csv> deny=<csv> docs=<csv> consent=<ref> retention=<days>",
+        "- /vc scope-audit <startup_id> [limit] [allow|reject]",
+        "",
+        "빠른 시작 예시:",
+        "- /vc collect acme 7d",
+        "- /vc onboard acme 7d",
+        "- /vc verify acme",
+        "- /vc scope acme allow=desktop_common/IR,desktop_common/Finance deny=*private*",
+        "- /vc dashboard acme 30d",
+        "- /vc pending acme",
+        "- /vc approve 11111111-2222-3333-4444-555555555555 force by=alice",
+    ]
+    return "\n".join(lines)
+
+
+def format_integration_help() -> str:
+    lines = [
+        "Integration 연동 기능 사용법 (BYO OAuth 스캐폴드)",
+        "",
+        "1) 연결 생성",
+        "- /integration help",
+        "- /integration connect <startup_id> <google_drive|google_gmail|google>",
+        "- /integration connect <startup_id> <provider> client_id=<id> client_secret=<secret> scopes=<csv>",
+        "",
+        "2) 상태/검증",
+        "- /integration exchange <connection_id> code=<auth_code> [redirect_uri=<uri>]",
+        "- /integration refresh <connection_id> [force] [min_valid_seconds=<n>]",
+        "- /integration status <startup_id> [provider]",
+        "- /integration test <connection_id>",
+        "",
+        "3) 연결 해제",
+        "- /integration revoke <connection_id> [reason]",
+        "",
+        "빠른 시작 예시:",
+        "- /integration connect acme google_drive",
+        "- /integration exchange 11111111-2222-3333-4444-555555555555 code=4/0AR...",
+        "- /integration refresh 11111111-2222-3333-4444-555555555555 force",
+        "- /integration status acme",
+        "- /integration test 11111111-2222-3333-4444-555555555555",
+        "- /integration revoke 11111111-2222-3333-4444-555555555555 policy_update",
+    ]
     return "\n".join(lines)
 
 
@@ -78,6 +182,414 @@ def parse_tool_command(text: str) -> tuple[str, dict[str, Any]] | None:
     if not isinstance(parsed, dict):
         raise ValueError("도구 입력 JSON은 객체(object)여야 합니다.")
     return tool_name, parsed
+
+
+def parse_vc_command(text: str) -> dict[str, Any] | None:
+    normalized = text.strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    known_subcommands = set(VC_PRIMARY_SUBCOMMANDS) | {"start", "시작", "도움말"}
+
+    command_text = ""
+    if lowered.startswith("/vc "):
+        command_text = normalized[4:].strip()
+    elif lowered == "/vc":
+        return {"tool_name": "__vc_help__", "tool_input": {}}
+    elif lowered.startswith("vc "):
+        candidate = normalized[3:].strip()
+        head = candidate.split(maxsplit=1)[0].strip().lower() if candidate else ""
+        if head in known_subcommands:
+            command_text = candidate
+    elif lowered.startswith("vc:"):
+        candidate = normalized[3:].strip()
+        head = candidate.split(maxsplit=1)[0].strip().lower() if candidate else ""
+        if head in known_subcommands:
+            command_text = candidate
+
+    if not command_text:
+        # 보조 자연어 파싱 (과도한 오탐 방지 위해 VC/액셀러레이터 키워드가 있는 경우만)
+        context_tokens = ("vc", "액셀러레이터", "accelerator")
+        if not any(token in lowered for token in context_tokens):
+            return None
+
+        if any(token in lowered for token in ("도움", "help", "사용법", "가이드", "시작")):
+            return {"tool_name": "__vc_help__", "tool_input": {}}
+
+        # 승인/거절
+        approval_match = re.search(r"\b([0-9a-f]{8}-[0-9a-f-]{27,})\b", lowered)
+        if approval_match and any(token in lowered for token in ("approve", "승인")):
+            return {
+                "tool_name": "vc_approval_queue",
+                "tool_input": {"action": "approve", "approval_id": approval_match.group(1)},
+            }
+        if approval_match and any(token in lowered for token in ("reject", "거절")):
+            return {
+                "tool_name": "vc_approval_queue",
+                "tool_input": {"action": "reject", "approval_id": approval_match.group(1), "reason": "manual reject"},
+            }
+
+        # 수집
+        if any(token in lowered for token in ("collect", "수집")):
+            startup_candidates = re.findall(r"\b([a-z0-9][a-z0-9_-]{1,63})\b", lowered)
+            excluded_tokens = {
+                "vc",
+                "collect",
+                "today",
+                "week",
+                "daily",
+                "weekly",
+                "accelerator",
+            }
+            startup_id = ""
+            for candidate in startup_candidates:
+                if candidate in excluded_tokens:
+                    continue
+                if candidate.isdigit():
+                    continue
+                startup_id = candidate
+                break
+            days_match = re.search(r"\b(\d+)\s*(d|day|days|일)\b", lowered)
+            period = "7d"
+            if "today" in lowered or "오늘" in normalized:
+                period = "today"
+            elif days_match:
+                period = f"{max(1, min(int(days_match.group(1)), 365))}d"
+            if startup_id:
+                return {
+                    "tool_name": "vc_collect_bundle",
+                    "tool_input": {"action": "collect", "startup_id": startup_id, "period": period},
+                }
+        return None
+
+    parts = command_text.split()
+    sub = parts[0].strip().lower()
+    args = parts[1:]
+
+    if sub in {"help", "start", "시작", "도움말"}:
+        return {"tool_name": "__vc_help__", "tool_input": {}}
+
+    if sub == "register":
+        if len(args) < 2:
+            raise ValueError("사용법: /vc register <startup_id> <display_name>")
+        startup_id = args[0].strip().lower()
+        display_name = " ".join(args[1:]).strip()
+        return {
+            "tool_name": "vc_collect_bundle",
+            "tool_input": {
+                "action": "register",
+                "startup_id": startup_id,
+                "display_name": display_name,
+            },
+        }
+
+    if sub == "bind-folder":
+        if len(args) < 3:
+            raise ValueError("사용법: /vc bind-folder <startup_id> <gateway_url> <folder_alias> [gateway_secret]")
+        startup_id = args[0].strip().lower()
+        gateway_url = args[1].strip()
+        folder_alias = args[2].strip()
+        tool_input: dict[str, Any] = {
+            "action": "bind_folder",
+            "startup_id": startup_id,
+            "gateway_url": gateway_url,
+            "folder_alias": folder_alias,
+        }
+        if len(args) >= 4 and args[3].strip():
+            tool_input["gateway_secret"] = args[3].strip()
+        return {"tool_name": "vc_collect_bundle", "tool_input": tool_input}
+
+    if sub == "collect":
+        if len(args) < 1:
+            raise ValueError("사용법: /vc collect <startup_id> <today|7d|30d>")
+        startup_id = args[0].strip().lower()
+        period = args[1].strip().lower() if len(args) >= 2 else "7d"
+        return {
+            "tool_name": "vc_collect_bundle",
+            "tool_input": {"action": "collect", "startup_id": startup_id, "period": period},
+        }
+
+    if sub == "report":
+        if len(args) < 1:
+            raise ValueError("사용법: /vc report <startup_id> <daily|weekly|range:YYYY-MM-DD,YYYY-MM-DD>")
+        startup_id = args[0].strip().lower()
+        mode = args[1].strip() if len(args) >= 2 else "weekly"
+        return {
+            "tool_name": "vc_generate_report",
+            "tool_input": {"startup_id": startup_id, "mode": mode},
+        }
+
+    if sub == "verify":
+        startup_id = args[0].strip().lower() if args else "demo"
+        return {
+            "tool_name": "vc_remote_e2e_smoke",
+            "tool_input": {"startup_id": startup_id},
+        }
+
+    if sub == "onboard":
+        if len(args) < 1:
+            raise ValueError("사용법: /vc onboard <startup_id> [today|7d]")
+        startup_id = args[0].strip().lower()
+        sample_period = args[1].strip().lower() if len(args) >= 2 else "today"
+        return {
+            "tool_name": "vc_onboarding_check",
+            "tool_input": {"startup_id": startup_id, "sample_period": sample_period, "run_sample_collect": True},
+        }
+
+    if sub == "pending":
+        startup_id = args[0].strip().lower() if args else ""
+        payload: dict[str, Any] = {"action": "pending"}
+        if startup_id:
+            payload["startup_id"] = startup_id
+        return {"tool_name": "vc_approval_queue", "tool_input": payload}
+
+    if sub == "approve":
+        if len(args) < 1:
+            raise ValueError("사용법: /vc approve <approval_id>")
+        force_high_risk = False
+        approver = ""
+        for token in args[1:]:
+            raw = token.strip()
+            low = raw.lower()
+            if low in {"force", "--force", "high-risk-ok"}:
+                force_high_risk = True
+                continue
+            if low.startswith("by="):
+                approver = raw.split("=", 1)[1].strip()
+                continue
+            if not approver:
+                approver = raw
+        return {
+            "tool_name": "vc_approval_queue",
+            "tool_input": {
+                "action": "approve",
+                "approval_id": args[0].strip(),
+                "force_high_risk": force_high_risk,
+                "approver": approver,
+            },
+        }
+
+    if sub == "reject":
+        if len(args) < 1:
+            raise ValueError("사용법: /vc reject <approval_id> [reason]")
+        reason = " ".join(args[1:]).strip() if len(args) >= 2 else "manual reject"
+        return {
+            "tool_name": "vc_approval_queue",
+            "tool_input": {"action": "reject", "approval_id": args[0].strip(), "reason": reason},
+        }
+
+    if sub == "status":
+        if len(args) < 1:
+            raise ValueError("사용법: /vc status <startup_id>")
+        return {
+            "tool_name": "vc_collect_bundle",
+            "tool_input": {"action": "status", "startup_id": args[0].strip().lower()},
+        }
+
+    if sub == "scope":
+        if len(args) < 1:
+            raise ValueError("사용법: /vc scope <startup_id> [allow=<csv> deny=<csv> docs=<csv> consent=<ref> retention=<days>]")
+        startup_id = args[0].strip().lower()
+        if len(args) == 1 or args[1].strip().lower() in {"show", "get"}:
+            return {"tool_name": "vc_scope_policy", "tool_input": {"action": "get", "startup_id": startup_id}}
+
+        options = args[1:]
+        if options and options[0].strip().lower() == "set":
+            options = options[1:]
+        payload: dict[str, Any] = {"action": "set", "startup_id": startup_id}
+        for token in options:
+            if "=" not in token:
+                continue
+            key, value = token.split("=", 1)
+            k = key.strip().lower()
+            v = value.strip()
+            if not v:
+                continue
+            if k in {"allow", "allow_prefixes"}:
+                payload["allow_prefixes"] = v
+            elif k in {"deny", "deny_patterns"}:
+                payload["deny_patterns"] = v
+            elif k in {"docs", "allowed_doc_types"}:
+                payload["allowed_doc_types"] = v
+            elif k in {"consent", "consent_reference"}:
+                payload["consent_reference"] = v
+            elif k in {"retention", "retention_days"}:
+                try:
+                    payload["retention_days"] = int(v)
+                except ValueError:
+                    raise ValueError("retention 값은 숫자여야 합니다.") from None
+        return {"tool_name": "vc_scope_policy", "tool_input": payload}
+
+    if sub == "scope-audit":
+        if len(args) < 1:
+            raise ValueError("사용법: /vc scope-audit <startup_id> [limit] [allow|reject]")
+        startup_id = args[0].strip().lower()
+        payload: dict[str, Any] = {"action": "audit", "startup_id": startup_id, "limit": 100}
+        for token in args[1:]:
+            raw = token.strip().lower()
+            if raw in {"allow", "reject"}:
+                payload["decision"] = raw
+            else:
+                try:
+                    payload["limit"] = max(1, min(int(raw), 2000))
+                except ValueError:
+                    continue
+        return {"tool_name": "vc_scope_policy", "tool_input": payload}
+
+    if sub == "dashboard":
+        startup_id = ""
+        window = "30d"
+        if args:
+            first = args[0].strip().lower()
+            if re.fullmatch(r"(?:\d+d|today|daily|weekly|week|month|30d|90d|7d)", first):
+                window = first
+            else:
+                startup_id = first
+        if len(args) >= 2:
+            window = args[1].strip().lower() or "30d"
+        payload: dict[str, Any] = {"window": window}
+        if startup_id:
+            payload["startup_id"] = startup_id
+        return {"tool_name": "vc_ops_dashboard", "tool_input": payload}
+
+    raise ValueError("지원하지 않는 /vc 명령입니다. /vc help 로 사용법을 확인하세요.")
+
+
+def parse_integration_command(text: str) -> dict[str, Any] | None:
+    normalized = text.strip()
+    if not normalized:
+        return None
+    lowered = normalized.lower()
+    known_subcommands = set(INTEGRATION_PRIMARY_SUBCOMMANDS) | {"start", "시작", "도움말"}
+
+    command_text = ""
+    if lowered.startswith("/integration "):
+        command_text = normalized[len("/integration ") :].strip()
+    elif lowered == "/integration":
+        return {"tool_name": "__integration_help__", "tool_input": {}}
+    elif lowered.startswith("/int "):
+        command_text = normalized[len("/int ") :].strip()
+    elif lowered == "/int":
+        return {"tool_name": "__integration_help__", "tool_input": {}}
+    elif lowered.startswith("integration "):
+        candidate = normalized[len("integration ") :].strip()
+        head = candidate.split(maxsplit=1)[0].strip().lower() if candidate else ""
+        if head in known_subcommands:
+            command_text = candidate
+
+    if not command_text:
+        return None
+
+    parts = command_text.split()
+    sub = parts[0].strip().lower()
+    args = parts[1:]
+
+    if sub in {"help", "start", "시작", "도움말"}:
+        return {"tool_name": "__integration_help__", "tool_input": {}}
+
+    if sub == "connect":
+        if len(args) < 2:
+            raise ValueError(
+                "사용법: /integration connect <startup_id> <google_drive|google_gmail|google> [client_id=<id>] [client_secret=<secret>] [scopes=<csv>]"
+            )
+        startup_id = args[0].strip().lower()
+        provider = args[1].strip().lower()
+        payload: dict[str, Any] = {"action": "connect", "startup_id": startup_id, "provider": provider}
+        for token in args[2:]:
+            raw = token.strip()
+            if "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            k = key.strip().lower()
+            v = value.strip()
+            if not v:
+                continue
+            if k in {"client_id", "clientid"}:
+                payload["client_id"] = v
+            elif k in {"client_secret", "clientsecret"}:
+                payload["client_secret"] = v
+            elif k in {"scopes", "scope"}:
+                payload["scopes"] = v
+            elif k in {"redirect_uri", "redirect"}:
+                payload["redirect_uri"] = v
+            elif k in {"mode"}:
+                payload["mode"] = v
+        return {"tool_name": "google_oauth_connect", "tool_input": payload}
+
+    if sub == "exchange":
+        if len(args) < 2:
+            raise ValueError("사용법: /integration exchange <connection_id> code=<auth_code> [redirect_uri=<uri>]")
+        connection_id = args[0].strip()
+        payload: dict[str, Any] = {"action": "exchange_code", "connection_id": connection_id}
+        for token in args[1:]:
+            raw = token.strip()
+            if "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            k = key.strip().lower()
+            v = value.strip()
+            if not v:
+                continue
+            if k == "code":
+                payload["code"] = v
+            elif k in {"redirect_uri", "redirect"}:
+                payload["redirect_uri"] = v
+        if not str(payload.get("code", "")).strip():
+            raise ValueError("사용법: /integration exchange <connection_id> code=<auth_code> [redirect_uri=<uri>]")
+        return {"tool_name": "google_oauth_connect", "tool_input": payload}
+
+    if sub == "refresh":
+        if len(args) < 1:
+            raise ValueError("사용법: /integration refresh <connection_id> [force] [min_valid_seconds=<n>]")
+        payload: dict[str, Any] = {"action": "refresh_token", "connection_id": args[0].strip()}
+        for token in args[1:]:
+            raw = token.strip()
+            low = raw.lower()
+            if low in {"force", "--force"}:
+                payload["force_refresh"] = True
+                continue
+            if "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            k = key.strip().lower()
+            v = value.strip()
+            if not v:
+                continue
+            if k in {"min_valid_seconds", "min", "min_seconds"}:
+                try:
+                    payload["min_valid_seconds"] = int(v)
+                except ValueError:
+                    raise ValueError("min_valid_seconds 값은 숫자여야 합니다.") from None
+            elif k in {"redirect_uri", "redirect"}:
+                payload["redirect_uri"] = v
+        return {"tool_name": "google_oauth_connect", "tool_input": payload}
+
+    if sub == "test":
+        if len(args) < 1:
+            raise ValueError("사용법: /integration test <connection_id>")
+        return {
+            "tool_name": "google_oauth_connect",
+            "tool_input": {"action": "test", "connection_id": args[0].strip()},
+        }
+
+    if sub == "status":
+        if len(args) < 1:
+            raise ValueError("사용법: /integration status <startup_id> [provider]")
+        payload: dict[str, Any] = {"action": "status", "startup_id": args[0].strip().lower()}
+        if len(args) >= 2 and args[1].strip():
+            payload["provider"] = args[1].strip().lower()
+        return {"tool_name": "google_oauth_connect", "tool_input": payload}
+
+    if sub == "revoke":
+        if len(args) < 1:
+            raise ValueError("사용법: /integration revoke <connection_id> [reason]")
+        reason = " ".join(args[1:]).strip() if len(args) >= 2 else "manual revoke"
+        return {
+            "tool_name": "google_oauth_connect",
+            "tool_input": {"action": "revoke", "connection_id": args[0].strip(), "reason": reason},
+        }
+
+    raise ValueError("지원하지 않는 /integration 명령입니다. /integration help 로 사용법을 확인하세요.")
 
 
 def parse_tool_only_mode_command(text: str) -> bool | None:

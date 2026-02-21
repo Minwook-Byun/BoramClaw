@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import List, Dict, Any
 import sys
 
+__version__ = "1.0.0"
+
 TOOL_SPEC = {
     "name": "universal_prompt_collector",
     "description": "전역에서 모든 프롬프트를 수집합니다 (Claude Code, BoramClaw, Telegram, Terminal 등)",
@@ -326,10 +328,10 @@ def collect_codex_prompts(days_back: int) -> List[Dict[str, Any]]:
                     if not day_dir.is_dir():
                         continue
 
-                    # 날짜 체크
+                    # 날짜 체크 (date만 비교 — datetime으로 비교하면 당일 0시가 cutoff보다 작아서 스킵됨)
                     try:
                         dir_date = datetime.strptime(f"{year_dir.name}-{month_dir.name}-{day_dir.name}", "%Y-%m-%d")
-                        if dir_date < cutoff_date:
+                        if dir_date.date() < cutoff_date.date():
                             continue
                     except ValueError:
                         continue

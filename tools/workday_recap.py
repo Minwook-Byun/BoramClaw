@@ -3,11 +3,12 @@
 workday_recap.py
 하루/주간 개발 활동 통합 리포트 생성 툴
 
-4개 데이터 소스 통합:
+5개 데이터 소스 통합:
 - screenpipe (화면 활동)
 - git (커밋 이력)
 - shell (명령어 패턴)
 - browser (연구 활동)
+- prompts (Claude Code, Codex, BoramClaw 등 프롬프트)
 """
 import sys
 import json
@@ -22,6 +23,10 @@ from screen_search import run as screen_search_run
 from git_daily_summary import run as git_summary_run
 from shell_pattern_analyzer import run as shell_analyzer_run
 from browser_research_digest import run as browser_digest_run
+from universal_prompt_collector import run as prompt_collector_run
+from study_tracker import run as study_tracker_run, format_report_markdown as study_format_md
+
+__version__ = "2.2.0"
 
 TOOL_SPEC = {
     "name": "workday_recap",
@@ -39,9 +44,11 @@ TOOL_SPEC = {
     - 터미널 명령어 통계
     - 시간대별 타임라인 (피크 시간 분석)
     - 작업 패턴 (오전/오후/저녁/밤)
+    - 프롬프트 히스토리 (Claude Code, Codex, BoramClaw 등)
 
-    모든 Git 저장소를 자동으로 스캔합니다.""",
-    "version": "2.0.0",
+    모든 Git 저장소를 자동으로 스캔합니다.
+    - ML 학습 진도 체크 (16주 커리큘럼 자동 추적)""",
+    "version": "2.2.0",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -262,6 +269,79 @@ def run(input_data: dict, context: dict) -> Any:
     except Exception as e:
         report["errors"].append(f"browser_research_digest 예외: {str(e)}")
 
+    # 5. Prompt Activity (Claude Code, Codex, BoramClaw 등)
+    try:
+        prompt_result = prompt_collector_run(
+            {"days_back": days + 1, "sources": ["all"], "min_length": 5},  # +1: 당일 시작 이전 세션 포함
+            context
+        )
+
+        if prompt_result.get("success"):
+            all_prompts = prompt_result.get("sample", [])  # 최근 10개
+            by_source = prompt_result.get("by_source", {})
+            total = prompt_result.get("total_prompts", 0)
+
+            # 오늘 날짜 기준 필터 (daily 모드)
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+            # 소스별 시간대 분포
+            hour_dist = {}
+            filtered_prompts = []
+            for p in all_prompts:
+                p_date = p.get("date", "")
+                p_time = p.get("time", "")
+                if p_date >= cutoff_date:
+                    filtered_prompts.append(p)
+                    if p_time:
+                        try:
+                            hour = int(p_time.split(":")[0])
+                            hour_dist[hour] = hour_dist.get(hour, 0) + 1
+                        except (ValueError, IndexError):
+                            pass
+
+            # 전체 수집 파일에서 날짜 필터 적용한 카운트 재계산
+            output_file = Path(context.get("workdir", ".")) / "logs" / f"prompts_collected_{datetime.now().strftime('%Y%m%d')}.jsonl"
+            date_filtered_total = 0
+            date_filtered_by_source = {}
+            if output_file.exists():
+                with open(output_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            p = json.loads(line)
+                            if p.get("date", "") >= cutoff_date:
+                                date_filtered_total += 1
+                                src = p.get("source", "unknown")
+                                date_filtered_by_source[src] = date_filtered_by_source.get(src, 0) + 1
+                        except json.JSONDecodeError:
+                            continue
+
+            report["sections"]["prompts"] = {
+                "total_prompts": date_filtered_total or total,
+                "by_source": date_filtered_by_source or by_source,
+                "recent_prompts": filtered_prompts[:10],
+                "time_distribution": hour_dist,
+            }
+        else:
+            report["errors"].append("prompt_collector 실패")
+    except Exception as e:
+        report["errors"].append(f"prompt_collector 예외: {str(e)}")
+
+    # 6. ML Study Progress (16주 커리큘럼 진도 체크)
+    try:
+        study_result = study_tracker_run(
+            {"mode": mode, "days_back": days},
+            context
+        )
+        if study_result.get("success"):
+            tracking = study_result.get("tracking", {})
+            report["sections"]["study"] = tracking
+            # 마크다운 섹션도 미리 생성해두기
+            if tracking.get("status") == "active":
+                report["sections"]["study"]["_markdown"] = study_format_md(tracking)
+    except Exception as e:
+        report["errors"].append(f"study_tracker 예외: {str(e)}")
+
     # Summary 생성
     report["summary"] = _generate_summary(report)
 
@@ -302,6 +382,22 @@ def _generate_summary(report: dict) -> str:
         if captures > 0:
             parts.append(f"화면 캡처 {captures}개")
 
+    if "prompts" in sections:
+        total_p = sections["prompts"].get("total_prompts", 0)
+        if total_p > 0:
+            by_src = sections["prompts"].get("by_source", {})
+            src_summary = ", ".join(f"{k}:{v}" for k, v in sorted(by_src.items(), key=lambda x: -x[1]))
+            parts.append(f"프롬프트 {total_p}개 ({src_summary})")
+
+    if "study" in sections:
+        study = sections["study"]
+        if study.get("status") == "active":
+            week = study.get("week", "?")
+            topic = study.get("topic", "?")
+            warning_lvl = study.get("warning", {}).get("level", "")
+            matched = study.get("study_evidence", {}).get("total_matched", 0)
+            parts.append(f"ML공부 Week{week}({topic}) {warning_lvl} {matched}개")
+
     if parts:
         return f"{period} 활동: " + ", ".join(parts)
     else:
@@ -313,7 +409,7 @@ def _generate_timeline(report: dict) -> dict:
     sections = report.get("sections", {})
 
     # 24시간 타임라인 초기화
-    timeline = {hour: {"git": 0, "browser": 0, "total": 0} for hour in range(24)}
+    timeline = {hour: {"git": 0, "browser": 0, "prompts": 0, "total": 0} for hour in range(24)}
 
     # Git 커밋 시간대 추가
     if "git" in sections:
@@ -328,6 +424,14 @@ def _generate_timeline(report: dict) -> dict:
         for hour, count in browser_time.items():
             timeline[int(hour)]["browser"] = count
             timeline[int(hour)]["total"] += count
+
+    # Prompt 활동 시간대 추가
+    if "prompts" in sections:
+        prompt_time = sections["prompts"].get("time_distribution", {})
+        for hour, count in prompt_time.items():
+            h = int(hour)
+            timeline[h]["prompts"] = timeline[h].get("prompts", 0) + count
+            timeline[h]["total"] += count
 
     # 활동이 있는 시간대만 추출
     active_hours = {h: data for h, data in timeline.items() if data["total"] > 0}

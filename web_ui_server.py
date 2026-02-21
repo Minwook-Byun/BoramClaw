@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import threading
 import time
 from typing import Any, Callable
+import urllib.parse
 
 
 HTML_PAGE = """<!doctype html>
@@ -97,7 +99,10 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/" or self.path.startswith("/index.html"):
+        parsed = urllib.parse.urlparse(self.path)
+        request_path = parsed.path
+
+        if request_path == "/" or request_path.startswith("/index.html"):
             body = HTML_PAGE.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -106,7 +111,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
 
-        if self.path.startswith("/api/health"):
+        if request_path.startswith("/api/health"):
             started_at = float(getattr(self.server, "started_at", time.time()))  # type: ignore[attr-defined]
             uptime = int(max(0.0, time.time() - started_at))
             return self._write_json(
@@ -118,6 +123,65 @@ class _Handler(BaseHTTPRequestHandler):
                     "service": "web_ui",
                 },
             )
+
+        if request_path == "/oauth/google/callback":
+            query_raw = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            query = {key: (values[-1] if values else "") for key, values in query_raw.items()}
+            oauth_callback = getattr(self.server, "oauth_callback", None)  # type: ignore[attr-defined]
+            if not callable(oauth_callback):
+                result_payload = {"ok": False, "error": "oauth_callback is not configured"}
+            else:
+                try:
+                    callback_result = oauth_callback(query)
+                except Exception as exc:
+                    callback_result = {"ok": False, "error": str(exc)}
+                if isinstance(callback_result, dict):
+                    result_payload = callback_result
+                else:
+                    result_payload = {"ok": False, "error": "oauth_callback must return dict payload"}
+
+            ok = bool(result_payload.get("ok", False))
+            title = "OAuth 연결 완료" if ok else "OAuth 연결 실패"
+            detail = ""
+            if ok:
+                detail = str(result_payload.get("message", "")).strip() or "인증 코드 교환이 완료되었습니다."
+            else:
+                detail = str(result_payload.get("error", "")).strip() or "인증 코드 교환 중 오류가 발생했습니다."
+            status_code = 200 if ok else 400
+            body = f"""<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{html.escape(title)}</title>
+  <style>
+    body {{ margin: 0; font-family: "Pretendard", "Noto Sans KR", sans-serif; background: #f5f7fb; color: #101828; }}
+    .wrap {{ max-width: 760px; margin: 40px auto; padding: 20px; }}
+    .card {{ background: #fff; border-radius: 12px; box-shadow: 0 10px 30px rgba(16,24,40,.08); padding: 20px; }}
+    h1 {{ margin: 0 0 12px; font-size: 24px; }}
+    p {{ margin: 0 0 10px; line-height: 1.6; }}
+    pre {{ white-space: pre-wrap; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 12px; overflow: auto; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>{html.escape(title)}</h1>
+      <p>{html.escape(detail)}</p>
+      <p>이 창을 닫고 원래 앱으로 돌아가도 됩니다.</p>
+      <pre>{html.escape(json.dumps(result_payload, ensure_ascii=False, indent=2))}</pre>
+    </div>
+  </div>
+</body>
+</html>
+"""
+            payload = body.encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
 
         self._write_json(404, {"ok": False, "error": "not_found"})
 
@@ -152,7 +216,12 @@ class _Handler(BaseHTTPRequestHandler):
 
 
 class WebUIServer:
-    def __init__(self, ask_callback: Callable[[str], str], port: int = 8091) -> None:
+    def __init__(
+        self,
+        ask_callback: Callable[[str], str],
+        port: int = 8091,
+        oauth_callback: Callable[[dict[str, str]], dict[str, Any]] | None = None,
+    ) -> None:
         self.ask_callback = ask_callback
         requested_port = int(port)
         if requested_port < 0:
@@ -161,6 +230,7 @@ class WebUIServer:
         self._server = ThreadingHTTPServer(("127.0.0.1", requested_port), _Handler)
         self.port = int(self._server.server_port)
         self._server.ask_callback = ask_callback  # type: ignore[attr-defined]
+        self._server.oauth_callback = oauth_callback  # type: ignore[attr-defined]
         self._server.started_at = time.time()  # type: ignore[attr-defined]
         self._thread: threading.Thread | None = None
 
@@ -177,7 +247,11 @@ class WebUIServer:
             self._thread.join(timeout=2)
 
 
-def start_web_ui_server(ask_callback: Callable[[str], str], port: int = 8091) -> WebUIServer:
-    server = WebUIServer(ask_callback=ask_callback, port=port)
+def start_web_ui_server(
+    ask_callback: Callable[[str], str],
+    port: int = 8091,
+    oauth_callback: Callable[[dict[str, str]], dict[str, Any]] | None = None,
+) -> WebUIServer:
+    server = WebUIServer(ask_callback=ask_callback, port=port, oauth_callback=oauth_callback)
     server.start()
     return server
