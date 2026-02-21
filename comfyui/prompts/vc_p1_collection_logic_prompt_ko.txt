@@ -1,0 +1,32 @@
+clean technical workflow diagram, white background, modern flat infographic style, centered title 'OpenClaw VC P1 수집/승인 로직', Korean labels, high readability, clear arrows, balanced spacing.
+
+2-lane layout:
+- Lane A (VC 중앙 오케스트레이터)
+- Lane B (스타트업 로컬 Gateway)
+
+Flow sequence:
+1) Telegram command '/vc collect acme 7d'
+2) Command parser + tenant registry lookup
+3) Gateway health check
+4) POST /manifest (기간, 문서유형, OCR 옵션)
+5) Gateway scans agreed shared folder and returns artifact metadata
+6) POST /artifact-content pull (selected files)
+7) filename rule classification + lightweight OCR fallback
+8) AES-256-GCM encrypted bundle save to vault/<startup_id>/...
+9) metadata json + sqlite records (collections, artifacts)
+10) auto verification checks (file exists, counts match, sha set match, decrypt match, db match)
+11) approval queue create (status: pending)
+12) Telegram notify: '수집 완료 + 승인 필요'
+13) '/vc approve <approval_id>' or reject
+14) approved only -> email dispatch + audit log update
+
+Policy callouts:
+- consent-based shared folder only
+- no full desktop capture in P1
+- external send requires approval gate
+- tenant isolation: per-startup key and storage path
+
+Visual style:
+- rounded boxes, thin connectors, numbered step badges
+- green for success path, amber for pending approval, red for reject path
+- no photorealism, no people, no clutter, no watermark
