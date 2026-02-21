@@ -66,3 +66,21 @@ schedules/
 notes/
 TODO.md
 SCRATCH.md
+
+# Personal retrospective logs (auto-generated, not for version control)
+daily_retrospective_*.md
+deep_weekly_retrospective_*.md
+weekly_retrospective_*.md
+log.md
+linkedin_post_*.md
+
+# VC tenant runtime config (commit only .example versions)
+config/vc_tenants.json
+config/rules.yaml
+
+# Google OAuth runtime tokens
+token_*.json
+*_oauth_token.json
+
+# Embedded git repositories (should be submodules instead)
+andrej-karpathy-skills/
