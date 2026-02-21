@@ -23,10 +23,23 @@ class TestDaemonDispatch(unittest.TestCase):
         self.assertTrue(handled)
         uninstall_linux.assert_called_once_with(dry_run=False)
 
+    def test_install_windows_calls_install_windows(self) -> None:
+        with patch("platform.system", return_value="Windows"), patch(
+            "install_daemon.install_windows"
+        ) as install_windows:
+            handled = handle_daemon_service_command(install=True, uninstall=False, dry_run=True)
+        self.assertTrue(handled)
+        install_windows.assert_called_once_with(dry_run=True)
+
     def test_unsupported_platform_raises(self) -> None:
-        with patch("platform.system", return_value="Windows"):
+        with patch("platform.system", return_value="FreeBSD"):
             with self.assertRaises(RuntimeError):
                 handle_daemon_service_command(install=True, uninstall=False, dry_run=True)
+
+    def test_unsupported_platform_uninstall_raises(self) -> None:
+        with patch("platform.system", return_value="FreeBSD"):
+            with self.assertRaises(RuntimeError):
+                handle_daemon_service_command(install=False, uninstall=True, dry_run=True)
 
 
 if __name__ == "__main__":
