@@ -22,11 +22,13 @@ from uuid import uuid4
 from runtime_commands import (
     _bool_env_local,
     _float_env_local,
+    format_integration_help,
     format_memory_query_result,
     format_permissions_map,
     format_reflexion_records,
     format_tool_list,
     format_user_output,
+    format_vc_help,
     format_workday_recap,
     is_schedule_list_request,
     is_tool_list_request,
@@ -39,8 +41,10 @@ from runtime_commands import (
     parse_reflexion_command,
     parse_schedule_arxiv_command,
     parse_set_permission_command,
+    parse_integration_command,
     parse_today_command,
     parse_tool_command,
+    parse_vc_command,
     parse_tool_only_mode_command,
     parse_week_command,
     summarize_for_memory,
@@ -200,7 +204,14 @@ def handle_daemon_service_command(*, install: bool, uninstall: bool, dry_run: bo
         return False
 
     import platform
-    from install_daemon import install_linux, install_macos, uninstall_linux, uninstall_macos
+    from install_daemon import (
+        install_linux,
+        install_macos,
+        install_windows,
+        uninstall_linux,
+        uninstall_macos,
+        uninstall_windows,
+    )
 
     system = platform.system()
     if install:
@@ -210,6 +221,9 @@ def handle_daemon_service_command(*, install: bool, uninstall: bool, dry_run: bo
         if system == "Linux":
             install_linux(dry_run=dry_run)
             return True
+        if system == "Windows":
+            install_windows(dry_run=dry_run)
+            return True
         raise RuntimeError(f"지원하지 않는 플랫폼입니다: {system}")
 
     if system == "Darwin":
@@ -217,6 +231,9 @@ def handle_daemon_service_command(*, install: bool, uninstall: bool, dry_run: bo
         return True
     if system == "Linux":
         uninstall_linux(dry_run=dry_run)
+        return True
+    if system == "Windows":
+        uninstall_windows(dry_run=dry_run)
         return True
     raise RuntimeError(f"지원하지 않는 플랫폼입니다: {system}")
 
@@ -1016,6 +1033,20 @@ class ToolExecutor:
             "구조화",
         )
         messenger_keywords = ("telegram", "텔레그램", "메신저", "메시지 보내", "send message", "알림 전송")
+        vc_keywords = (
+            "/vc",
+            " vc ",
+            "accelerator",
+            "액셀러레이터",
+            "투자사",
+            "vc ",
+            "collect",
+            "수집",
+            "승인",
+            "approval",
+            "report",
+            "리포트",
+        )
         onchain_keywords = (
             "onchain",
             "on-chain",
@@ -1048,6 +1079,7 @@ class ToolExecutor:
         needs_stock = any(k in prompt_lower for k in stock_keywords)
         needs_semantic_snapshot = any(k in prompt_lower for k in semantic_snapshot_keywords)
         needs_messenger = any(k in prompt_lower for k in messenger_keywords)
+        needs_vc = any(k in prompt_lower for k in vc_keywords)
         needs_onchain = any(k in prompt_lower for k in onchain_keywords)
 
         with self.custom_tools_lock:
@@ -1073,6 +1105,19 @@ class ToolExecutor:
             matched_custom_names.append("semantic_web_snapshot")
         if needs_messenger and "telegram_send_message" in custom_names and "telegram_send_message" not in matched_custom_names:
             matched_custom_names.append("telegram_send_message")
+        if needs_vc:
+            for vc_tool_name in (
+                "vc_collect_bundle",
+                "vc_generate_report",
+                "vc_approval_queue",
+                "vc_dispatch_email",
+                "vc_remote_e2e_smoke",
+                "vc_scope_policy",
+                "vc_ops_dashboard",
+                "vc_onboarding_check",
+            ):
+                if vc_tool_name in custom_names and vc_tool_name not in matched_custom_names:
+                    matched_custom_names.append(vc_tool_name)
         if needs_onchain and "onchain_wallet_snapshot" in custom_names and "onchain_wallet_snapshot" not in matched_custom_names:
             matched_custom_names.append("onchain_wallet_snapshot")
         cache_key = json.dumps(
@@ -1092,6 +1137,7 @@ class ToolExecutor:
                 "stock": needs_stock,
                 "semantic_snapshot": needs_semantic_snapshot,
                 "messenger": needs_messenger,
+                "vc": needs_vc,
                 "onchain": needs_onchain,
                 "matched_custom": matched_custom_names,
                 "strict_workdir_only": self.strict_workdir_only,
@@ -1927,6 +1973,16 @@ def main() -> None:
     parser.add_argument("--dashboard", action="store_true", help="Print runtime metrics dashboard and exit")
     parser.add_argument("--setup", action="store_true", help="Run interactive setup wizard and exit")
     parser.add_argument("--setup-non-interactive", action="store_true", help="Run non-interactive setup wizard and exit")
+    parser.add_argument(
+        "--setup-vc",
+        default="",
+        help="Run VC onboarding setup wizard and exit. mode: central|gateway",
+    )
+    parser.add_argument(
+        "--setup-vc-non-interactive",
+        action="store_true",
+        help="Run VC onboarding setup in non-interactive mode",
+    )
     parser.add_argument("--web-ui", action="store_true", help="Start web ui server")
     parser.add_argument("--web-ui-port", type=int, default=0, help="Override web ui port")
     parser.add_argument("--telegram", action="store_true", help="Start telegram bridge")
@@ -1943,14 +1999,23 @@ def main() -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(1) from exc
 
-    if args.setup or args.setup_non_interactive:
-        from setup_wizard import run_setup_wizard
+    if args.setup or args.setup_non_interactive or args.setup_vc.strip():
+        from setup_wizard import run_setup_wizard, run_vc_setup_wizard
 
-        result = run_setup_wizard(
-            env_path=".env",
-            non_interactive=bool(args.setup_non_interactive),
-            updates={},
-        )
+        if args.setup_vc.strip():
+            result = run_vc_setup_wizard(
+                workdir=".",
+                env_path=".env",
+                mode=args.setup_vc.strip(),
+                non_interactive=bool(args.setup_vc_non_interactive),
+                updates={},
+            )
+        else:
+            result = run_setup_wizard(
+                env_path=".env",
+                non_interactive=bool(args.setup_non_interactive),
+                updates={},
+            )
         print(json.dumps(result, ensure_ascii=False))
         return
 
@@ -2250,7 +2315,36 @@ def main() -> None:
                     return display_answer
 
                 parsed_tool_cmd = parse_tool_command(prompt)
-                if parsed_tool_cmd is not None:
+                parsed_vc_cmd = parse_vc_command(prompt)
+                parsed_integration_cmd = parse_integration_command(prompt)
+                if parsed_vc_cmd is not None:
+                    tool_name = str(parsed_vc_cmd.get("tool_name", "")).strip()
+                    tool_input = parsed_vc_cmd.get("tool_input", {})
+                    if not tool_name:
+                        answer = "VC 명령 파싱 결과가 유효하지 않습니다."
+                    elif tool_name == "__vc_help__":
+                        answer = format_vc_help()
+                    else:
+                        result_text, is_error = tools.run_tool(tool_name, tool_input if isinstance(tool_input, dict) else {})
+                        on_tool_event(tool_name, tool_input if isinstance(tool_input, dict) else {}, result_text, is_error)
+                        answer = result_text
+                elif parsed_integration_cmd is not None:
+                    tool_name = str(parsed_integration_cmd.get("tool_name", "")).strip()
+                    tool_input = parsed_integration_cmd.get("tool_input", {})
+                    if not tool_name:
+                        answer = "Integration 명령 파싱 결과가 유효하지 않습니다."
+                    elif tool_name == "__integration_help__":
+                        answer = format_integration_help()
+                    else:
+                        result_text, is_error = tools.run_tool(tool_name, tool_input if isinstance(tool_input, dict) else {})
+                        on_tool_event(
+                            tool_name,
+                            tool_input if isinstance(tool_input, dict) else {},
+                            result_text,
+                            is_error,
+                        )
+                        answer = result_text
+                elif parsed_tool_cmd is not None:
                     tool_name, tool_input = parsed_tool_cmd
                     result_text, is_error = tools.run_tool(tool_name, tool_input)
                     on_tool_event(tool_name, tool_input, result_text, is_error)
@@ -2316,6 +2410,57 @@ def main() -> None:
                     source=source,
                 )
                 return message
+
+    def process_oauth_google_callback(query: dict[str, str]) -> dict[str, Any]:
+        error = str(query.get("error", "")).strip()
+        if error:
+            return {"ok": False, "error": f"google oauth error: {error}"}
+        connection_id = str(query.get("state", "")).strip()
+        code = str(query.get("code", "")).strip()
+        if not connection_id:
+            return {"ok": False, "error": "missing state(connection_id) in callback query"}
+        if not code:
+            return {"ok": False, "error": "missing code in callback query"}
+
+        tool_input: dict[str, Any] = {
+            "action": "exchange_code",
+            "connection_id": connection_id,
+            "code": code,
+        }
+        if str(query.get("redirect_uri", "")).strip():
+            tool_input["redirect_uri"] = str(query.get("redirect_uri", "")).strip()
+
+        result_text, is_error = tools.run_tool("google_oauth_connect", tool_input)
+        on_tool_event("google_oauth_connect", tool_input, result_text, is_error)
+
+        result_payload: dict[str, Any] = {}
+        try:
+            parsed_outer = json.loads(result_text)
+            if isinstance(parsed_outer, dict):
+                inner_raw = parsed_outer.get("result")
+                if isinstance(inner_raw, str):
+                    parsed_inner = json.loads(inner_raw)
+                    if isinstance(parsed_inner, dict):
+                        result_payload = parsed_inner
+                elif isinstance(inner_raw, dict):
+                    result_payload = inner_raw
+                else:
+                    result_payload = parsed_outer
+        except Exception:
+            result_payload = {}
+
+        if is_error or not bool(result_payload.get("success", False)):
+            return {
+                "ok": False,
+                "error": str(result_payload.get("error", "")).strip() or result_text,
+                "connection_id": connection_id,
+            }
+        return {
+            "ok": True,
+            "message": f"connection_id={connection_id} code exchange 완료",
+            "connection_id": connection_id,
+            "status": str(result_payload.get("status", "")),
+        }
 
     scheduler: JobScheduler | None = None
     rules_engine: RulesEngine | None = None
@@ -2387,6 +2532,7 @@ def main() -> None:
         try:
             web_ui_server = start_web_ui_server(
                 ask_callback=lambda message: process_external_request(message, source="web_ui"),
+                oauth_callback=process_oauth_google_callback,
                 port=web_ui_port,
             )
             logger.log("web_ui_start", payload=f"listening on 127.0.0.1:{web_ui_server.port}")
@@ -2650,6 +2796,40 @@ def main() -> None:
             model_prompt = delegate_input if delegate_input is not None else user_input
 
             parsed_tool_cmd = parse_tool_command(user_input)
+            parsed_vc_cmd = parse_vc_command(user_input)
+            parsed_integration_cmd = parse_integration_command(user_input)
+            if parsed_vc_cmd is not None:
+                tool_name = str(parsed_vc_cmd.get("tool_name", "")).strip()
+                tool_input = parsed_vc_cmd.get("tool_input", {})
+                if not tool_name:
+                    emit_answer("VC 명령 파싱 결과가 유효하지 않습니다.")
+                    continue
+                if tool_name == "__vc_help__":
+                    emit_answer(format_vc_help())
+                    continue
+                if not isinstance(tool_input, dict):
+                    tool_input = {}
+                result_text, is_error = tools.run_tool(tool_name, tool_input)
+                on_tool_event(tool_name, tool_input, result_text, is_error)
+                emit_answer(result_text)
+                continue
+
+            if parsed_integration_cmd is not None:
+                tool_name = str(parsed_integration_cmd.get("tool_name", "")).strip()
+                tool_input = parsed_integration_cmd.get("tool_input", {})
+                if not tool_name:
+                    emit_answer("Integration 명령 파싱 결과가 유효하지 않습니다.")
+                    continue
+                if tool_name == "__integration_help__":
+                    emit_answer(format_integration_help())
+                    continue
+                if not isinstance(tool_input, dict):
+                    tool_input = {}
+                result_text, is_error = tools.run_tool(tool_name, tool_input)
+                on_tool_event(tool_name, tool_input, result_text, is_error)
+                emit_answer(result_text)
+                continue
+
             if parsed_tool_cmd is not None:
                 tool_name, tool_input = parsed_tool_cmd
                 result_text, is_error = tools.run_tool(tool_name, tool_input)

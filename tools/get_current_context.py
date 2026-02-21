@@ -14,6 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from context_engine import ContextEngine, format_context_display
 
+__version__ = "1.0.0"
+
 TOOL_SPEC = {
     "name": "get_current_context",
     "description": "현재 작업 맥락을 조회합니다. 최근 활동(Git, Shell, Browser)을 분석하여 현재 무엇을 하고 있는지 자동으로 파악합니다.",

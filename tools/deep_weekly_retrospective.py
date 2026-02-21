@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from collections import Counter
 
+__version__ = "1.0.0"
+
 TOOL_SPEC = {
     "name": "deep_weekly_retrospective",
     "description": "1만자 분량의 깊이 있는 피드백 회고 (Karpathy + Bitter Lesson)",
@@ -825,6 +827,170 @@ def deep_next_week_goals(data: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def deep_study_loop_section(prompts: List[Dict], workdir: str) -> str:
+    """
+    ML 16주 커리큘럼 학습 진도 Loop 섹션 (주간 회고 전용).
+    study_tracker를 호출해 이번 주 학습 증거를 분석하고
+    다음 주 학습 계획을 안내한다.
+    """
+    lines = []
+    lines.append("## 📚 Part 6: ML 학습 진도 Loop")
+    lines.append("")
+    lines.append("> *\"API wrapper 탈출\" 16주 커리큘럼 — 매주 자동 진도 체크*")
+    lines.append("")
+
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        from study_tracker import (
+            load_study_plan,
+            get_current_week_info,
+            detect_study_prompts,
+            build_study_report,
+            format_report_markdown,
+            collect_recent_prompts,
+            MIN_STUDY_PROMPTS_WEEKLY,
+        )
+
+        plan = load_study_plan()
+        if not plan:
+            lines.append("⚠️ `config/study_plan.json`을 찾을 수 없습니다.")
+            lines.append("커리큘럼 시작 날짜와 계획을 설정해주세요.")
+            return "\n".join(lines)
+
+        week_info = get_current_week_info(plan)
+        status = week_info.get("status", "unknown")
+
+        if status == "not_started":
+            lines.append(f"⏳ {week_info.get('message', '')}")
+            lines.append("")
+            lines.append("커리큘럼 시작 전! 이번 주에 미리 준비하세요:")
+            lines.append("1. Vaswani 2017 논문 다운로드")
+            lines.append("2. PyTorch 설치 확인")
+            lines.append("3. 하루 3시간 블록 캘린더에 잡기")
+            return "\n".join(lines)
+
+        if status == "completed":
+            lines.append(f"🎉 {week_info.get('message', '')}")
+            lines.append("")
+            lines.append("16주 완주 달성! 이제 진짜 'API wrapper 탈출' 완성.")
+            return "\n".join(lines)
+
+        # 활성 주차 — 상세 분석
+        current_week = week_info["week"]
+        topic = week_info["topic"]
+        phase_name = week_info["phase_name"]
+        keywords = week_info["keywords"]
+
+        # 이번 주 프롬프트에서 학습 증거 탐지
+        recent = collect_recent_prompts(8, workdir)  # 8일 (주간 + 여유)
+        matched, high_quality = detect_study_prompts(recent, keywords, topic)
+
+        lines.append(f"### Week {current_week}: {topic}")
+        lines.append(f"**Phase {week_info['phase']}**: {phase_name}")
+        lines.append(f"**논문**: {week_info['paper']}")
+        lines.append(f"**목표**: {week_info['goal']}")
+        lines.append(f"**산출물**: {week_info['deliverable']}")
+        lines.append(f"**기간**: {week_info['week_start']} ~ {week_info['week_end']}")
+        lines.append("")
+
+        # 진도 판정
+        threshold = MIN_STUDY_PROMPTS_WEEKLY
+        match_count = len(matched)
+        hq_count = len(high_quality)
+
+        if match_count == 0:
+            verdict = "🔴 FAIL — 이번 주 학습 흔적 없음"
+            verdict_detail = (
+                "Codex에게 논문 내용을 단 한 번도 물어보지 않았습니다.\n"
+                "공부한 것과 안 한 것은 숫자가 말해줍니다."
+            )
+        elif match_count < threshold // 2:
+            pct = int(match_count / threshold * 100)
+            verdict = f"🟠 WEAK — 목표의 {pct}% 달성"
+            verdict_detail = (
+                f"학습 프롬프트 {match_count}개 탐지 (목표: {threshold}개).\n"
+                "조금 더 깊이 파고들어야 합니다."
+            )
+        elif match_count < threshold:
+            verdict = f"🟡 PARTIAL — {match_count}/{threshold}개"
+            verdict_detail = "절반 이상 달성! 마지막 스퍼트 필요."
+        else:
+            verdict = f"🟢 ACHIEVED — {match_count}개 (목표 {threshold}개 초과)"
+            verdict_detail = "이번 주 학습 목표 완전 달성! 훌륭합니다."
+
+        lines.append(f"**이번 주 진도**: {verdict}")
+        lines.append(f"{verdict_detail}")
+        lines.append("")
+        lines.append(f"- 탐지된 학습 프롬프트: {match_count}개")
+        lines.append(f"- 고품질 학습 프롬프트 (키워드 2개+ 매칭): {hq_count}개")
+        lines.append("")
+
+        # 학습 증거 샘플
+        if matched:
+            lines.append("**이번 주 학습 흔적 (상위 5개)**:")
+            for p in matched[:5]:
+                kws = ", ".join(p.get("_matched_keywords", [])[:3])
+                content = (p.get("content", "") or "")[:100]
+                src = p.get("source", "?")
+                t = p.get("time", "")
+                lines.append(f'- `[{src} {t}]` "{content}" → `{kws}`')
+            lines.append("")
+        else:
+            lines.append("**학습 흔적**: 없음")
+            lines.append("")
+
+        # 다음 주 예고 및 현재 주 마무리 체크리스트
+        lines.append("### 이번 주 마무리 체크리스트")
+        lines.append("")
+        deliverable = week_info["deliverable"]
+        lines.append(f"- [ ] 산출물 완성: **{deliverable}**")
+        lines.append(f"- [ ] 논문/자료 최소 3시간 읽기")
+        lines.append(f"- [ ] 수식/개념 손으로 정리")
+        lines.append(f"- [ ] Codex에게 핵심 질문 {threshold}개 이상 던지기")
+        lines.append("")
+
+        # 다음 주 예고
+        next_week_num = current_week + 1
+        if next_week_num <= plan.get("total_weeks", 16):
+            next_week_info = get_current_week_info(plan, override_week=next_week_num)
+            if next_week_info.get("status") in ("active", "unknown"):
+                lines.append(f"### 다음 주 예고: Week {next_week_num}")
+                lines.append(f"**주제**: {next_week_info.get('topic', '?')}")
+                lines.append(f"**논문**: {next_week_info.get('paper', '?')}")
+                lines.append(f"**목표**: {next_week_info.get('goal', '?')}")
+                lines.append("")
+                # 다음 주 준비 추천 질문 1개
+                next_kws = next_week_info.get("keywords", [])
+                if next_kws:
+                    lines.append("**미리 생각해볼 질문**:")
+                    lines.append(f'"{next_week_info.get("goal", "다음 주제를 미리 조사해보세요")}"')
+                lines.append("")
+
+        # 전체 진도 바
+        total_weeks = plan.get("total_weeks", 16)
+        done_pct = int((current_week - 1) / total_weeks * 100)
+        bar_filled = int(done_pct / 5)
+        bar = "█" * bar_filled + "░" * (20 - bar_filled)
+        lines.append(f"**전체 진도**: [{bar}] Week {current_week}/{total_weeks} ({done_pct}%)")
+        lines.append("")
+
+        if match_count == 0:
+            lines.append("---")
+            lines.append("⚡ **경고**: 이번 주 학습 기록이 전혀 없습니다.")
+            lines.append("Codex에서 논문 관련 질문을 시작하세요. 지금 바로.")
+            lines.append("")
+            lines.append("**첫 질문 예시**:")
+            next_q = week_info.get("goal", topic)
+            lines.append(f'> "{next_q}"')
+
+    except ImportError as e:
+        lines.append(f"⚠️ study_tracker import 실패: {e}")
+    except Exception as e:
+        lines.append(f"⚠️ 학습 진도 분석 중 오류: {e}")
+
+    return "\n".join(lines)
+
+
 def run(input_data: dict, context: dict) -> dict:
     """깊이 있는 주간 회고 실행"""
     days_back = input_data.get("days_back", 7)
@@ -893,8 +1059,12 @@ def run(input_data: dict, context: dict) -> dict:
     lines.append(deep_next_week_goals(data))
     lines.append("")
 
-    # Part 6: 메타 회고
-    lines.append("## 🔄 Part 6: 메타 회고 - 이 회고에 대한 회고")
+    # Part 6: ML 학습 진도 Loop
+    lines.append(deep_study_loop_section(prompts, workdir))
+    lines.append("")
+
+    # Part 7: 메타 회고
+    lines.append("## 🔄 Part 7: 메타 회고 - 이 회고에 대한 회고")
     lines.append("")
     lines.append("**이 회고는**:")
     lines.append("- Karpathy 4가지 원칙 적용 ✅")
@@ -902,11 +1072,7 @@ def run(input_data: dict, context: dict) -> dict:
     lines.append(f"- {len(prompts)}개 프롬프트 전수 조사 ✅")
     lines.append("- 구체적 사례와 피드백 ✅")
     lines.append("- 실행 가능한 액션 플랜 ✅")
-    lines.append("")
-    lines.append("**다음 회고 개선점**:")
-    lines.append("- 프롬프트 품질 추이 그래프")
-    lines.append("- 주제별 클러스터링")
-    lines.append("- 학습 주제 자동 추천")
+    lines.append("- ML 학습 진도 자동 체크 ✅")
     lines.append("")
 
     markdown = "\n".join(lines)
@@ -924,7 +1090,7 @@ def run(input_data: dict, context: dict) -> dict:
         "summary": {
             "prompts": len(prompts),
             "commits": len(commits),
-            "sections": 6,
+            "sections": 7,
             "prev_prompts": len(prev_prompts),
             "sources": dict(sources),
             "collector_success": bool(collection_meta.get("collector_success")),

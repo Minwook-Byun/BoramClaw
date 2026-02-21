@@ -20,6 +20,8 @@ from workday_recap import run as workday_recap_run
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.macos_notify import notify as macos_notify
 
+__version__ = "1.0.0"
+
 TOOL_SPEC = {
     "name": "daily_recap_notifier",
     "description": "매일 개발 활동 리포트를 생성하고 파일로 저장한 뒤 macOS 알림을 전송합니다.",
