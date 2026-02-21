@@ -1,0 +1,9 @@
+{
+  "startup_id": "acme",
+  "shared_secret": "replace-me",
+  "max_artifacts": 500,
+  "folders": {
+    "desktop_common": "/Users/yourname/Desktop/common"
+  }
+}
+
