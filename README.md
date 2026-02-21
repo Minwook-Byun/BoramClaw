@@ -338,6 +338,296 @@ Phase 5: Rules Engine          ✅ 8개 규칙 로드
 - **Phase 9**: IDE 플러그인 (VSCode, JetBrains)
 - **Phase 10**: 모바일 앱 (iOS/Android)
 
+## 🧩 OpenClaw VC Mode (P1)
+
+공용 폴더 + 동의 기반으로 스타트업 데이터를 수집하는 VC/액셀러레이터 워크플로우입니다.
+
+### 누구를 위한 가이드인가
+
+- VC/AC 운영자: 스타트업 자료를 정기 수집하고 승인 후 보고/발송하려는 팀
+- 스타트업 담당자: 지정된 폴더만 안전하게 공유하고 증빙 제출 자동화를 원하는 팀
+- 비개발자 사용자: 설치/실행을 명령어 복붙 중심으로 진행하려는 사용자
+
+### 시스템 구성 (2대 PC)
+
+- 중앙 오케스트레이터 PC(VC 측): 텔레그램 명령 수신, 수집 요청, 암호화 저장, 승인 큐 관리
+- 로컬 게이트웨이 PC(스타트업 측): 동의된 폴더를 읽기 전용으로 노출하는 API 서버
+
+핵심 원칙:
+
+- 기본은 `공유 폴더` 모델
+- 외부 전송(메일)은 승인 후 실행
+- full-access는 가능하지만 과수집 위험이 높아 파일럿에서만 제한적으로 권장
+
+---
+
+## 0) 완전 초기 설치 (아무것도 없는 PC 기준)
+
+### 공통 준비물
+
+- 인터넷 연결
+- Python 3.10 이상
+- Git
+
+### macOS
+
+```bash
+xcode-select --install
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+brew install git python@3.11
+```
+
+### Windows (PowerShell 관리자 권한)
+
+```powershell
+winget install --id Git.Git -e
+winget install --id Python.Python.3.11 -e
+```
+
+`winget`이 없다면 Python/Git 공식 설치 프로그램으로 수동 설치 후 진행합니다.
+
+### Linux (Ubuntu 예시)
+
+```bash
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
+```
+
+---
+
+## 1) VC(수집자) 설치 루프
+
+### 1-1. 저장소 설치
+
+```bash
+git clone https://github.com/yourusername/BoramClaw.git
+cd BoramClaw
+
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+python3 -m pip install pyyaml
+```
+
+Windows CMD/PowerShell에서는 `source` 대신 아래를 사용합니다.
+
+```powershell
+.venv\Scripts\activate
+```
+
+### 1-2. VC 설정 파일 자동 생성
+
+```bash
+python3 main.py --setup-vc central
+```
+
+비대화형 예시:
+
+```bash
+python3 main.py --setup-vc central --setup-vc-non-interactive
+```
+
+생성되는 핵심 파일:
+
+- `config/vc_tenants.json`
+- `.env`
+
+---
+
+## 2) 스타트업(게이트웨이) 설치 루프
+
+### 2-1. 저장소 설치
+
+VC와 동일하게 설치합니다.
+
+```bash
+git clone https://github.com/yourusername/BoramClaw.git
+cd BoramClaw
+
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+```
+
+### 2-2. 게이트웨이 설정 파일 자동 생성
+
+```bash
+python3 main.py --setup-vc gateway
+```
+
+비대화형 예시:
+
+```bash
+python3 main.py --setup-vc gateway --setup-vc-non-interactive
+```
+
+생성되는 핵심 파일:
+
+- `config/vc_gateway.json`
+- `scripts/windows/start_gateway.bat`
+- `scripts/windows/install_gateway_service.bat`
+- `scripts/windows/uninstall_gateway_service.bat`
+
+### 2-3. 게이트웨이 실행
+
+macOS/Linux:
+
+```bash
+python3 vc_gateway_agent.py --config config/vc_gateway.json --host 0.0.0.0 --port 8742
+```
+
+Windows:
+
+```text
+scripts\windows\start_gateway.bat
+```
+
+백그라운드 등록(Windows):
+
+```text
+scripts\windows\install_gateway_service.bat
+```
+
+---
+
+## 3) 동의(Consent) 운영 방식
+
+서면 동의(종이/스캔) 운영 가능합니다. P1에서는 실무적으로 아래 절차를 권장합니다.
+
+### 3-1. 동의서 필수 항목
+
+- 수집 목적
+- 수집 범위(폴더/문서유형)
+- 보관 기간
+- 제3자 제공/발송 범위
+- 철회 방법
+
+### 3-2. 운영 등록 방식
+
+1. 동의서 ID 발급  
+예: `CONSENT-ACME-2026-02-19-v1`
+
+2. 동의서 원본/스캔 보관  
+파일 해시(SHA256)와 함께 문서대장 기록 권장
+
+3. 시스템 반영  
+`/vc scope` 명령으로 동의 ID와 보관기간 등록
+
+```text
+/vc scope acme allow=desktop_common/Finance,desktop_common/IR deny=*private*,*.key,*.pem docs=business_registration,tax_invoice,social_insurance consent=CONSENT-ACME-2026-02-19-v1 retention=365
+```
+
+주의:
+
+- 현재 P1은 `consent_reference` 저장/조회는 가능하지만, 미입력 강제 차단은 운영 절차로 보완해야 합니다.
+- 운영에서는 collect 전에 항상 `/vc scope <startup_id>` 확인을 표준 절차로 두는 것을 권장합니다.
+
+---
+
+## 4) 첫 수집 실행 (실사용 루프)
+
+### 4-1. VC 측 실행
+
+```bash
+python3 main.py --telegram
+```
+
+### 4-2. 텔레그램/CLI에서 순서대로 실행
+
+```text
+/vc register acme Acme AI
+/vc bind-folder acme http://<startup-gateway-ip>:8742 desktop_common
+/vc onboard acme 7d
+/vc scope acme
+/vc collect acme 7d
+/vc pending acme
+/vc approve <approval_id> by=<operator>
+/vc report acme weekly
+```
+
+### 4-3. 자주 쓰는 명령
+
+```text
+/vc help
+/vc verify acme
+/vc dashboard acme 30d
+/vc scope-audit acme 100 reject
+/vc reject <approval_id> <reason>
+```
+
+---
+
+## 5) 저장 구조
+
+- 암호화 번들: `vault/<startup_id>/<yyyy>/<mm>/<dd>/<collection_id>.bin`
+- 메타데이터: `vault/<startup_id>/<yyyy>/<mm>/<dd>/<collection_id>.json`
+- 키 저장소: `data/vc_keys.json` (AES-256-GCM)
+- 운영 DB: `data/vc_platform.db`
+
+---
+
+## 6) full-access 모델 사용 시 주의
+
+full-access는 기술적으로 가능하지만 과수집 위험이 큽니다.
+
+권장 운영:
+
+- 파일럿 단계에서만 제한 사용
+- `deny` 패턴을 강하게 적용
+- `allowed_doc_types`를 비워두지 않기
+- 승인 게이트를 반드시 유지
+
+권장 deny 예시:
+
+```text
+*private*,*diary*,*.env,*.key,*.pem,*/AppData/*,*/.ssh/*
+```
+
+---
+
+## 7) 비개발자 트러블슈팅
+
+### Python 실행 오류
+
+Windows에서 Python 경로 인식이 안 되면 환경변수 지정:
+
+```text
+BORAMCLAW_PYTHON_BIN=C:\Python311\python.exe
+```
+
+관련 변수:
+
+```text
+BORAMCLAW_MIN_PYTHON=3.10
+BORAMCLAW_WINDOWS_TASK_SCHEDULE=ONLOGON|DAILY
+BORAMCLAW_WINDOWS_TASK_DELAY=0000:30
+BORAMCLAW_WINDOWS_TASK_USER=<windows_user>
+```
+
+### 게이트웨이 연결 실패
+
+- 스타트업 PC에서 `vc_gateway_agent.py`가 실행 중인지 확인
+- VC PC에서 해당 IP:PORT(예: `8742`) 접근 가능한지 확인
+- 사내 방화벽/백신에서 포트 차단 여부 확인
+
+### 텔레그램 명령이 동작하지 않을 때
+
+- `.env`의 `TELEGRAM_BOT_TOKEN` 확인
+- `.env`의 `TELEGRAM_ALLOWED_CHAT_ID` 확인
+- `python3 main.py --telegram`로 브릿지 실행 여부 확인
+
+---
+
+## 8) 운영 체크리스트
+
+- 스타트업별 동의서 ID 발급 및 원본 보관
+- `/vc scope`에 allow/deny/docs/consent/retention 반영
+- `/vc onboard` 성공 후 본수집 진행
+- `pending -> approve/reject` 승인 로그 관리
+- 월 1회 scope-audit 및 리스크 대시보드 점검
+
 ## 🤝 기여
 
 기여는 언제나 환영합니다!
