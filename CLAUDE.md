@@ -409,3 +409,69 @@ User: "지난주 뭐했나 시간대별로"
 - Shell command statistics
 - Hourly timeline with peak hours
 - Work pattern analysis (오전/오후/저녁/밤)
+
+---
+
+## Comprehensive Retrospective System
+
+BoramClaw includes a transparent and powerful retrospective system that combines:
+1. **Karpathy's 4 Principles** (Think, Simplicity, Surgical, Goal-Driven)
+2. **Bitter Lesson** (Quality > Quantity, Learning Structure)
+3. **Universal Prompt Collection** (Claude Code, Codex, Browser, Terminal)
+
+### Core Tools
+
+**1. Universal Prompt Collector** (`universal_prompt_collector.py`)
+- Collects prompts from ALL sources:
+  - Claude Code Desktop (~/.claude/projects/)
+  - Codex (~/.codex/history.jsonl)
+  - BoramClaw (logs/chat_log.jsonl)
+  - Telegram (logs/telegram_bot.log)
+  - Terminal AI tools (~/.zsh_history)
+  - Browser History (Chrome SQLite)
+  - log.md (manual curation)
+- Runs daily at 20:00 (scheduled)
+- Output: `logs/prompts_collected_YYYYMMDD.jsonl`
+
+**2. Comprehensive Weekly Retrospective** (`comprehensive_weekly_retrospective.py`)
+- Analyzes prompts + commits with Karpathy principles
+- Generates quality scores (Karpathy 0-100, Bitter Lesson 0-100)
+- Provides insights and next week SMART goals
+- Runs weekly on Sundays at 21:00 (scheduled)
+- Output: `weekly_retrospective_YYYY_weekWW.md`
+
+### Usage
+
+**Manual execution**:
+```bash
+# Collect all prompts (7 days)
+python3 tools/universal_prompt_collector.py \
+  --tool-input-json '{"days_back": 7, "sources": ["all"]}' \
+  --tool-context-json '{"workdir": "/Users/boram/BoramClaw"}'
+
+# Generate comprehensive retrospective
+python3 tools/comprehensive_weekly_retrospective.py \
+  --tool-input-json '{"days_back": 7}' \
+  --tool-context-json '{"workdir": "/Users/boram/BoramClaw"}'
+```
+
+**Automatic scheduling**: Configured in `schedules/jobs.json`
+
+**Key metrics tracked**:
+- Total prompts by source (Claude Code, Codex, etc.)
+- Karpathy principle scores (Think, Simplicity, Surgical, Goal-Driven)
+- Prompt quality score (length, specificity, context)
+- Git commit patterns (frequency, distribution, size)
+- Next week SMART goals (measurable, specific)
+
+### Retrospective Structure
+
+The generated retrospective includes 6 parts:
+1. **Raw Data**: Total transparency (prompts, commits, sources)
+2. **Karpathy Analysis**: 4 principles with scores and advice
+3. **Bitter Lesson**: Quality vs quantity, repeated patterns
+4. **Pattern Insights**: Main tools, commit distribution, balance
+5. **Next Week Goals**: SMART goals based on current metrics
+6. **Action Checklist**: Executable tasks for improvement
+
+This system ensures **complete transparency** in weekly retrospectives by capturing ALL prompts across ALL development tools, not just within BoramClaw.
