@@ -15,10 +15,12 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from collections import Counter
 
+__version__ = "1.0.0"
+
 TOOL_SPEC = {
     "name": "deep_weekly_retrospective",
-    "description": "1만자 분량의 깊이 있는 피드백 회고 (Karpathy + Bitter Lesson)",
-    "version": "1.0.0",
+    "description": "1만자+ 분량의 깊이 있는 피드백 회고 (Karpathy + Bitter Lesson + Meta Impact)",
+    "version": __version__,
     "input_schema": {
         "type": "object",
         "properties": {
@@ -825,6 +827,316 @@ def deep_next_week_goals(data: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def deep_meta_impact_analysis(commits: List[Dict], prompts: List[Dict], workdir: str) -> str:
+    """Part 7: Meta Impact 원칙 - Activity vs Impact 회고 (3000자)"""
+    lines = []
+    lines.append("## ⚖️ Part 7: Meta Impact 원칙 - 결과 중심 회고")
+    lines.append("")
+    lines.append("> **\"망한 회사들의 공통점은 피드백이 없었다는 것이다.\"** — Sheryl Sandberg")
+    lines.append("> **Activity(과정) ≠ Impact(결과). 열심히 한 것과 성과를 낸 것은 다르다.**")
+    lines.append("")
+
+    # 커밋 Impact 분류
+    try:
+        from weekly_goal_manager import _classify_commit, _compute_impact_score
+    except ImportError:
+        # fallback: 인라인 분류
+        def _classify_commit(msg):
+            m = msg.lower()
+            if any(s in m for s in ["feat:", "fix:", "perf:", "구현", "완성", "배포", "해결", "추가", "개선", "✨", "🐛"]):
+                return "impact"
+            if any(s in m for s in ["test:", "infra:", "테스트", "설정", "환경", "🧪", "🔧"]):
+                return "investment"
+            return "activity"
+
+        def _compute_impact_score(classified):
+            total = len(classified)
+            if not total:
+                return {"impact_score": 0, "grade": "N/A", "impact_commits": 0, "investment_commits": 0, "activity_commits": 0, "impact_density": 0}
+            imp = sum(1 for c in classified if c["impact_type"] == "impact")
+            inv = sum(1 for c in classified if c["impact_type"] == "investment")
+            act = sum(1 for c in classified if c["impact_type"] == "activity")
+            density = imp / total
+            score = density * 70 + (inv / total) * 30
+            grade = "A" if score >= 60 else "B" if score >= 40 else "C" if score >= 20 else "D"
+            return {"impact_score": round(score, 1), "grade": grade, "impact_commits": imp, "investment_commits": inv, "activity_commits": act, "impact_density": round(density, 3)}
+
+    classified = [{"message": c["message"], "impact_type": _classify_commit(c["message"])} for c in commits]
+    score_data = _compute_impact_score(classified)
+
+    lines.append("### 1. Activity vs Impact 분석")
+    lines.append("")
+    lines.append(f"**총 커밋**: {len(commits)}개")
+    lines.append(f"- 🔥 Impact (직접 가치): {score_data.get('impact_commits', 0)}개")
+    lines.append(f"- 🌱 Investment (미래 투자): {score_data.get('investment_commits', 0)}개")
+    lines.append(f"- ⚙️ Activity (유지보수): {score_data.get('activity_commits', 0)}개")
+    lines.append("")
+    lines.append(f"**Impact Density**: {score_data.get('impact_density', 0):.1%}")
+    lines.append(f"**Impact Score**: {score_data.get('impact_score', 0):.1f}/100 → **{score_data.get('grade', 'N/A')}**")
+    lines.append("")
+
+    # 구체적 사례
+    impact_commits = [c for c in commits if _classify_commit(c["message"]) == "impact"]
+    activity_commits = [c for c in commits if _classify_commit(c["message"]) == "activity"]
+
+    if impact_commits:
+        lines.append("**Impact 커밋 사례** (잘한 것):")
+        for c in impact_commits[:5]:
+            lines.append(f"- ✅ {c['date']}: {c['message']}")
+        lines.append("")
+
+    if activity_commits:
+        lines.append("**Activity 커밋 사례** (임팩트 없는 바쁨):")
+        for c in activity_commits[:5]:
+            lines.append(f"- ⚙️ {c['date']}: {c['message']}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+
+    # 2. 주간 목표 달성도 (No Surprise 원칙)
+    lines.append("### 2. No Surprise 원칙 - 기대치 vs 실제")
+    lines.append("")
+
+    try:
+        from weekly_goal_manager import _load_goals, _current_week_key
+        goals_data = _load_goals()
+        week_key = _current_week_key()
+        week = goals_data.get("weeks", {}).get(week_key)
+
+        if week:
+            goals = week.get("goals", [])
+            completed = [g for g in goals if g["status"] == "completed"]
+            not_started = [g for g in goals if g["status"] == "not_started"]
+
+            lines.append(f"**선언한 목표**: {len(goals)}개")
+            lines.append(f"**완료**: {len(completed)}개 ({len(completed)/max(len(goals),1)*100:.0f}%)")
+            lines.append("")
+
+            for i, g in enumerate(goals):
+                status_icon = {"completed": "✅", "in_progress": "🔄", "not_started": "❌", "blocked": "🚫", "dropped": "🗑️"}.get(g["status"], "❓")
+                lines.append(f"{status_icon} [{g['category'].upper()}] {g['description']}")
+                if g.get("success_criteria"):
+                    lines.append(f"   성공 기준: {g['success_criteria']}")
+                lines.append("")
+
+            if not_started:
+                lines.append("**⚠️ Meta 자기 피드백**:")
+                lines.append(f"시작도 안 한 목표가 {len(not_started)}개. "
+                             "이 결과가 놀랍다면 — 그것 자체가 No Surprise 원칙 위반이다.")
+                lines.append("")
+        else:
+            lines.append("⚠️ **이번 주 목표가 선언되지 않았습니다.**")
+            lines.append("")
+            lines.append("Meta 원칙: 문서화된 기대치 없이는 공정한 평가도 없다.")
+            lines.append("'열심히 했다'는 주관적 호소는 피드백의 독소 조항이 된다.")
+            lines.append("")
+            lines.append("**다음 주 액션**: 월요일에 `weekly_goal_manager(action='declare')`로 목표 선언")
+            lines.append("")
+    except Exception:
+        lines.append("ℹ️ 주간 목표 데이터 접근 불가. `weekly_goal_manager` 도구로 목표를 선언하세요.")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+
+    # 3. 자기 채찍질 (솔직한 회고)
+    lines.append("### 3. 자기 채찍질 — 솔직한 자기 피드백")
+    lines.append("")
+    lines.append("> Meta에서 매니저는 '불을 끄러 다니는 소방관'. 1인 개발자에겐 자기 자신이 그 매니저다.")
+    lines.append("")
+
+    whip_points = []
+
+    # 채찍 1: Impact 밀도
+    if score_data.get("activity_commits", 0) > score_data.get("impact_commits", 0) * 2:
+        whip_points.append(
+            f"**Activity 과다**: Activity 커밋({score_data['activity_commits']}개)이 "
+            f"Impact 커밋({score_data['impact_commits']}개)의 2배 이상. "
+            "바쁘게 '일한 것'과 '성과를 낸 것'은 다르다."
+        )
+
+    # 채찍 2: 프롬프트 품질
+    if prompts:
+        short_prompts = [p for p in prompts if len(p.get("content", "")) < 20]
+        if len(short_prompts) > len(prompts) * 0.3:
+            whip_points.append(
+                f"**프롬프트 품질 경고**: 전체 {len(prompts)}개 중 {len(short_prompts)}개({len(short_prompts)/len(prompts)*100:.0f}%)가 20자 미만. "
+                "AI에게 맥락 없는 지시는 자신에게도 불명확한 목표의 증거."
+            )
+
+    # 채찍 3: 커밋 분산
+    if commits:
+        commit_days = len(set(c["date"] for c in commits))
+        if commit_days <= 2 and len(commits) >= 3:
+            whip_points.append(
+                f"**몰아치기 패턴**: {len(commits)}개 커밋이 {commit_days}일에 집중. "
+                "Meta 원칙: 꾸준한 임팩트 > 몰아치는 Activity."
+            )
+
+    # 채찍 4: 커밋 0개
+    if not commits:
+        whip_points.append(
+            "**커밋 제로**: 이번 주 커밋이 없다. "
+            "코드를 작성하지 않았거나, 작성했지만 커밋하지 않았거나. "
+            "어느 쪽이든 추적 불가능한 작업은 존재하지 않는 것과 같다."
+        )
+
+    if not whip_points:
+        whip_points.append(
+            "이번 주는 선방했다. 하지만 안주하지 말 것 — "
+            "다음 주 목표를 더 도전적으로 설정하라."
+        )
+
+    for point in whip_points:
+        lines.append(f"🪞 {point}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+
+    # 4. 투자 활동 인정 (채찍 속 위로)
+    investment_commits = [c for c in commits if _classify_commit(c["message"]) == "investment"]
+    if investment_commits:
+        lines.append("### 4. 투자 활동 인정")
+        lines.append("")
+        lines.append("> 탐색, 학습, 실험은 그 자체로 미래 Impact의 투자다.")
+        lines.append("")
+        for c in investment_commits[:5]:
+            lines.append(f"- 🌱 {c['date']}: {c['message']}")
+        lines.append("")
+        lines.append(f"**투자 비율**: {score_data.get('investment_commits', 0)}/{len(commits)} "
+                     f"({score_data.get('investment_commits', 0)/max(len(commits),1)*100:.0f}%)")
+        lines.append("")
+
+    # 5. 다음 주 Impact 목표 제안
+    lines.append("### 5. 다음 주 Impact 목표 제안")
+    lines.append("")
+    lines.append("Meta 원칙에 따라, 다음 주 목표를 **Impact 기준**으로 설정하세요:")
+    lines.append("")
+    lines.append("```")
+    lines.append("weekly_goal_manager(action='declare', goals=[")
+    lines.append("  {\"description\": \"[여기에 Impact 목표]\", \"success_criteria\": \"[검증 가능한 기준]\", \"category\": \"impact\"},")
+    lines.append("  {\"description\": \"[여기에 Investment 목표]\", \"success_criteria\": \"[검증 가능한 기준]\", \"category\": \"investment\"},")
+    lines.append("])")
+    lines.append("```")
+    lines.append("")
+    lines.append("**목표 설정 체크리스트** (Meta):")
+    lines.append("- [ ] Activity가 아닌 Impact로 정의했는가?")
+    lines.append("- [ ] 성공 기준이 검증 가능한가?")
+    lines.append("- [ ] 금요일에 '놀라움(Surprise)' 없이 평가할 수 있는가?")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def deep_youtube_search_analysis(workdir: str, days_back: int) -> str:
+    """YouTube 및 웹 검색 활동 분석"""
+    lines = []
+    lines.append("## 🔎 Part 8: YouTube & 웹 검색 활동 분석")
+    lines.append("")
+
+    try:
+        from browser_research_digest import run as browser_run
+        result = browser_run({"hours": days_back * 24, "min_cluster_size": 1}, {})
+
+        if not result.get("ok"):
+            lines.append("ℹ️ 브라우저 데이터를 가져올 수 없습니다.")
+            return "\n".join(lines)
+
+        # YouTube 분석
+        yt = result.get("youtube", {})
+        videos = yt.get("videos", [])
+        yt_searches = yt.get("searches", [])
+
+        if videos:
+            lines.append("### YouTube 시청 활동")
+            lines.append("")
+            lines.append(f"**시청 영상**: {len(videos)}개")
+            lines.append("")
+
+            # 영상 목록
+            for v in videos[:15]:
+                lines.append(f"- 🎬 {v.get('title', '제목 없음')}")
+            lines.append("")
+
+            # 학습 vs 엔터테인먼트 추정
+            learning_keywords = ["tutorial", "강의", "설명", "how to", "learn", "course",
+                                 "개발", "코딩", "프로그래밍", "python", "react", "ai", "ml",
+                                 "deep learning", "machine learning"]
+            learning_videos = [v for v in videos if any(
+                kw in v.get("title", "").lower() for kw in learning_keywords
+            )]
+            lines.append(f"**학습 영상 추정**: {len(learning_videos)}/{len(videos)}개 "
+                         f"({len(learning_videos)/max(len(videos),1)*100:.0f}%)")
+            if learning_videos:
+                lines.append("학습 영상:")
+                for v in learning_videos[:5]:
+                    lines.append(f"  - 📚 {v.get('title', '')}")
+            lines.append("")
+
+        if yt_searches:
+            lines.append("### YouTube 검색")
+            lines.append("")
+            for s in yt_searches[:10]:
+                lines.append(f"- 🔍 \"{s.get('title', '')}\"")
+            lines.append("")
+
+        # 웹 검색 분석
+        search_queries = result.get("search_queries", [])
+        if search_queries:
+            lines.append("### 웹 검색 쿼리")
+            lines.append("")
+            lines.append(f"**총 검색**: {len(search_queries)}개")
+            lines.append("")
+
+            # 검색 엔진별
+            from collections import Counter
+            engine_counts = Counter(s.get("engine", "unknown") for s in search_queries)
+            for engine, count in engine_counts.most_common():
+                lines.append(f"**{engine}**: {count}개")
+            lines.append("")
+
+            # 검색어 목록
+            lines.append("**검색어 목록**:")
+            for s in search_queries[:20]:
+                lines.append(f"- \"{s.get('query', '')}\" ({s.get('engine', '')})")
+            lines.append("")
+
+            # 검색 주제 분류
+            dev_keywords = ["python", "react", "api", "error", "bug", "how to", "stackoverflow",
+                           "github", "npm", "pip", "docker", "개발", "코드"]
+            dev_queries = [s for s in search_queries if any(
+                kw in s.get("query", "").lower() for kw in dev_keywords
+            )]
+            if dev_queries:
+                lines.append(f"**개발 관련 검색**: {len(dev_queries)}/{len(search_queries)}개 "
+                             f"({len(dev_queries)/max(len(search_queries),1)*100:.0f}%)")
+                lines.append("")
+
+        # 활동 분류 요약
+        breakdown = result.get("activity_breakdown", {})
+        if any(breakdown.values()):
+            lines.append("### 브라우징 활동 분류")
+            lines.append("")
+            total_pages = sum(breakdown.values())
+            for category, count in sorted(breakdown.items(), key=lambda x: x[1], reverse=True):
+                label = {"learning": "📚 학습", "dev_research": "💻 개발 리서치",
+                         "search": "🔍 검색", "other": "🌐 기타"}.get(category, category)
+                lines.append(f"- {label}: {count}개 ({count/max(total_pages,1)*100:.0f}%)")
+            lines.append("")
+
+        if not videos and not search_queries:
+            lines.append("ℹ️ 이번 주 YouTube/웹검색 데이터가 없습니다.")
+            lines.append("")
+
+    except Exception as e:
+        lines.append(f"ℹ️ 데이터 수집 중 오류: {str(e)}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def run(input_data: dict, context: dict) -> dict:
     """깊이 있는 주간 회고 실행"""
     days_back = input_data.get("days_back", 7)
@@ -851,7 +1163,7 @@ def run(input_data: dict, context: dict) -> dict:
     lines = []
     lines.append(f"# 주간 회고 (Week {datetime.now().strftime('%W')}, {datetime.now().strftime('%Y-%m-%d')})")
     lines.append("")
-    lines.append("> **Karpathy 원칙 + Bitter Lesson + 1만자 피드백**")
+    lines.append("> **Karpathy 원칙 + Bitter Lesson + Meta Impact + 1만자+ 피드백**")
     lines.append("")
 
     # Part 1: 요약
@@ -883,7 +1195,7 @@ def run(input_data: dict, context: dict) -> dict:
     lines.append("---")
     lines.append("")
 
-    # Part 2-5: 깊이 있는 분석
+    # Part 2-5: 깊이 있는 분석 (기존 학습목표/로드맵 유지)
     lines.append(deep_karpathy_analysis(prompts, commits))
     lines.append("")
     lines.append(deep_bitter_lesson_analysis(prompts, prev_prompts))
@@ -893,20 +1205,39 @@ def run(input_data: dict, context: dict) -> dict:
     lines.append(deep_next_week_goals(data))
     lines.append("")
 
-    # Part 6: 메타 회고
-    lines.append("## 🔄 Part 6: 메타 회고 - 이 회고에 대한 회고")
+    # Part 7: Meta Impact 원칙 (신규)
+    lines.append(deep_meta_impact_analysis(commits, prompts, workdir))
     lines.append("")
-    lines.append("**이 회고는**:")
-    lines.append("- Karpathy 4가지 원칙 적용 ✅")
-    lines.append("- Bitter Lesson 기반 분석 ✅")
-    lines.append(f"- {len(prompts)}개 프롬프트 전수 조사 ✅")
+
+    # Part 8: YouTube & 웹 검색 활동 (신규)
+    lines.append(deep_youtube_search_analysis(workdir, days_back))
+    lines.append("")
+
+    # Part 9: 메타 회고 (기존 Part 6 → Part 9로 번호 변경)
+    lines.append("## 🔄 Part 9: 메타 회고 - 이 회고에 대한 회고")
+    lines.append("")
+    lines.append("**이 회고의 프레임워크**:")
+    lines.append("- Karpathy 4가지 원칙 (코딩 품질) ✅")
+    lines.append("- Bitter Lesson 기반 분석 (확장성) ✅")
+    lines.append("- **Meta Impact 원칙 (결과 중심성)** ✅ 🆕")
+    lines.append("- **YouTube & 웹 검색 활동** ✅ 🆕")
+    lines.append(f"- {len(prompts)}개 프롬프트 전수 조사 (Claude + Codex) ✅")
     lines.append("- 구체적 사례와 피드백 ✅")
     lines.append("- 실행 가능한 액션 플랜 ✅")
+    lines.append("- 자기 채찍질 (No Surprise 자기 피드백) ✅")
+    lines.append("")
+    lines.append("**3축 회고 프레임워크**:")
+    lines.append("```")
+    lines.append("Karpathy 원칙 → 코딩 품질 (HOW)")
+    lines.append("Bitter Lesson → 확장성 (WHAT scales)")
+    lines.append("Meta Impact  → 결과 중심성 (SO WHAT)")
+    lines.append("```")
     lines.append("")
     lines.append("**다음 회고 개선점**:")
+    lines.append("- Impact Score 주간 트렌드 (최근 4주)")
     lines.append("- 프롬프트 품질 추이 그래프")
-    lines.append("- 주제별 클러스터링")
-    lines.append("- 학습 주제 자동 추천")
+    lines.append("- 학습 주제 자동 추천 (YouTube + 검색 기반)")
+    lines.append("- 주간 목표 달성률 히스토리")
     lines.append("")
 
     markdown = "\n".join(lines)
@@ -924,7 +1255,7 @@ def run(input_data: dict, context: dict) -> dict:
         "summary": {
             "prompts": len(prompts),
             "commits": len(commits),
-            "sections": 6,
+            "sections": 9,
             "prev_prompts": len(prev_prompts),
             "sources": dict(sources),
             "collector_success": bool(collection_meta.get("collector_success")),

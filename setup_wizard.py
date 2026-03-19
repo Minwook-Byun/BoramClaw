@@ -7,8 +7,11 @@ from typing import Any
 
 
 DEFAULTS = {
+    "LLM_PROVIDER": "claude",
     "CLAUDE_MODEL": "claude-sonnet-4-5-20250929",
     "CLAUDE_MAX_TOKENS": "1024",
+    "CODEX_COMMAND": "codex",
+    "CODEX_MODEL": "",
     "TOOL_WORKDIR": ".",
     "CUSTOM_TOOL_DIR": "tools",
     "STRICT_WORKDIR_ONLY": "1",
@@ -17,6 +20,8 @@ DEFAULTS = {
     "HEALTH_SERVER_ENABLED": "1",
     "HEALTH_PORT": "8080",
     "SESSION_LOG_SPLIT": "1",
+    "ADVANCED_FEATURES_ENABLED": "1",
+    "ADVANCED_PROVIDER": "codex",
 }
 
 
@@ -71,11 +76,14 @@ def run_setup_wizard(
     if api_key:
         values["ANTHROPIC_API_KEY"] = api_key
 
+    values["LLM_PROVIDER"] = _ask("LLM_PROVIDER (claude/codex)", values.get("LLM_PROVIDER", DEFAULTS["LLM_PROVIDER"]))
     values["CLAUDE_MODEL"] = _ask("CLAUDE_MODEL", values.get("CLAUDE_MODEL", DEFAULTS["CLAUDE_MODEL"]))
     values["CLAUDE_MAX_TOKENS"] = _ask(
         "CLAUDE_MAX_TOKENS",
         values.get("CLAUDE_MAX_TOKENS", DEFAULTS["CLAUDE_MAX_TOKENS"]),
     )
+    values["CODEX_COMMAND"] = _ask("CODEX_COMMAND", values.get("CODEX_COMMAND", DEFAULTS["CODEX_COMMAND"]))
+    values["CODEX_MODEL"] = _ask("CODEX_MODEL (비우면 Codex 기본값 사용)", values.get("CODEX_MODEL", DEFAULTS["CODEX_MODEL"]))
     values["TOOL_WORKDIR"] = _ask("TOOL_WORKDIR", values.get("TOOL_WORKDIR", DEFAULTS["TOOL_WORKDIR"]))
     values["CUSTOM_TOOL_DIR"] = _ask("CUSTOM_TOOL_DIR", values.get("CUSTOM_TOOL_DIR", DEFAULTS["CUSTOM_TOOL_DIR"]))
     values["STRICT_WORKDIR_ONLY"] = _ask(
@@ -89,6 +97,14 @@ def run_setup_wizard(
     values["SCHEDULER_POLL_SECONDS"] = _ask(
         "SCHEDULER_POLL_SECONDS",
         values.get("SCHEDULER_POLL_SECONDS", DEFAULTS["SCHEDULER_POLL_SECONDS"]),
+    )
+    values["ADVANCED_FEATURES_ENABLED"] = _ask(
+        "ADVANCED_FEATURES_ENABLED (1/0)",
+        values.get("ADVANCED_FEATURES_ENABLED", DEFAULTS["ADVANCED_FEATURES_ENABLED"]),
+    )
+    values["ADVANCED_PROVIDER"] = _ask(
+        "ADVANCED_PROVIDER",
+        values.get("ADVANCED_PROVIDER", DEFAULTS["ADVANCED_PROVIDER"]),
     )
 
     for key, val in updates.items():

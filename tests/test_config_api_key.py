@@ -98,3 +98,29 @@ class TestConfigApiKey(unittest.TestCase):
             os.environ.clear()
             os.environ.update(old_env)
 
+    def test_codex_provider_does_not_require_anthropic_key(self) -> None:
+        case = self.runtime_root / "codex_provider"
+        case.mkdir(parents=True, exist_ok=True)
+        dotenv = case / ".env"
+        dotenv.write_text(
+            "LLM_PROVIDER=codex\n"
+            "CODEX_COMMAND=codex\n"
+            "TOOL_WORKDIR=.\n"
+            "CUSTOM_TOOL_DIR=tools\n",
+            encoding="utf-8",
+        )
+        (case / "tools").mkdir(parents=True, exist_ok=True)
+
+        old_cwd = Path.cwd()
+        old_env = dict(os.environ)
+        try:
+            os.chdir(case)
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            with patch("shutil.which", return_value="/usr/local/bin/codex"):
+                cfg = config.BoramClawConfig.from_env()
+                self.assertEqual(cfg.llm_provider, "codex")
+                self.assertEqual(cfg.validate(), [])
+        finally:
+            os.chdir(old_cwd)
+            os.environ.clear()
+            os.environ.update(old_env)

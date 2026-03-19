@@ -22,10 +22,12 @@ from pathlib import Path
 from typing import List, Dict, Any
 import sys
 
+__version__ = "1.0.0"
+
 TOOL_SPEC = {
     "name": "universal_prompt_collector",
     "description": "전역에서 모든 프롬프트를 수집합니다 (Claude Code, BoramClaw, Telegram, Terminal 등)",
-    "version": "1.0.0",
+    "version": __version__,
     "input_schema": {
         "type": "object",
         "properties": {

@@ -17,6 +17,10 @@ import subprocess
 import sys
 import threading
 import logging
+try:
+    from zoneinfo import ZoneInfo
+except Exception:
+    ZoneInfo = None
 from typing import Any, Callable
 from uuid import uuid4
 from runtime_commands import (
@@ -30,6 +34,7 @@ from runtime_commands import (
     format_workday_recap,
     is_schedule_list_request,
     is_tool_list_request,
+    parse_advanced_command,
     parse_arxiv_quick_request,
     parse_deep_weekly_quick_request,
     parse_context_command,
@@ -37,14 +42,18 @@ from runtime_commands import (
     parse_feedback_command,
     parse_memory_command,
     parse_reflexion_command,
+    parse_review_command,
     parse_schedule_arxiv_command,
     parse_set_permission_command,
     parse_today_command,
     parse_tool_command,
     parse_tool_only_mode_command,
+    parse_wrapup_command,
     parse_week_command,
     summarize_for_memory,
 )
+from session_timeseries import append_timeseries_rows, build_wrapup_snapshot
+from wrapup_evidence import collect_wrapup_evidence
 
 
 API_HOST = "api.anthropic.com"
@@ -439,6 +448,8 @@ class ToolExecutor:
         self.custom_tool_dir = self._resolve_custom_tool_dir(custom_tool_dir)
         self.schedule_file = self._resolve_schedule_file(schedule_file)
         self.strict_workdir_only = strict_workdir_only
+        self.scheduler_timezone_name = os.getenv("SCHEDULER_TIMEZONE", "").strip()
+        self.scheduler_timezone = self._resolve_timezone(self.scheduler_timezone_name or None)
         if self.strict_workdir_only:
             self._ensure_audit_hook(self.workdir)
         self.custom_tools_lock = threading.Lock()
@@ -719,10 +730,32 @@ class ToolExecutor:
             raise ValueError("시간(time)은 00:00~23:59 범위여야 합니다.")
         return hour, minute
 
-    def _compute_next_run_utc_iso(self, hhmm: str, now_utc: datetime | None = None) -> str:
+    @staticmethod
+    def _resolve_timezone(tz_name: str | None) -> Any:
+        if not tz_name:
+            return datetime.now(timezone.utc).astimezone().tzinfo
+        if ZoneInfo is None:
+            return datetime.now(timezone.utc).astimezone().tzinfo
+        try:
+            return ZoneInfo(tz_name)
+        except Exception:
+            return datetime.now(timezone.utc).astimezone().tzinfo
+
+    def _resolve_run_timezone(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self._resolve_timezone(value.strip())
+        return self.scheduler_timezone
+
+    def _compute_next_run_utc_iso(
+        self,
+        hhmm: str,
+        now_utc: datetime | None = None,
+        schedule_timezone: Any | None = None,
+    ) -> str:
         hour, minute = self._parse_hhmm(hhmm)
         now_utc = now_utc or datetime.now(timezone.utc)
-        now_local = now_utc.astimezone()
+        tz = schedule_timezone or self.scheduler_timezone
+        now_local = now_utc.astimezone(tz)
         next_local = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if next_local <= now_local:
             next_local = next_local + timedelta(days=1)
@@ -918,6 +951,10 @@ class ToolExecutor:
                     "properties": {
                         "tool_name": {"type": "string"},
                         "time": {"type": "string", "description": "HH:MM in local time"},
+                        "timezone": {
+                            "type": "string",
+                            "description": "IANA timezone for this job (예: Asia/Seoul). 비워두면 SCHEDULER_TIMEZONE 또는 OS 로컬 타임존 사용",
+                        },
                         "tool_input": {"type": "object"},
                         "description": {"type": "string"},
                     },
@@ -1248,6 +1285,7 @@ class ToolExecutor:
                 result = self._tool_schedule_daily_tool(
                     tool_name=str(input_data.get("tool_name", "")),
                     hhmm=str(input_data.get("time", "")),
+                    timezone_name=str(input_data.get("timezone", "")),
                     tool_input=input_data.get("tool_input", {}),
                     description=str(input_data.get("description", "")),
                 )
@@ -1681,6 +1719,7 @@ class ToolExecutor:
         self,
         tool_name: str,
         hhmm: str,
+        timezone_name: str,
         tool_input: Any,
         description: str,
     ) -> dict[str, Any]:
@@ -1710,8 +1749,14 @@ class ToolExecutor:
                 "tool_name": name,
             }
 
+        timezone_name = timezone_name.strip()
+        job_timezone = self._resolve_run_timezone(timezone_name or None)
         now_utc = datetime.now(timezone.utc)
-        next_run_at = self._compute_next_run_utc_iso(hhmm, now_utc=now_utc)
+        next_run_at = self._compute_next_run_utc_iso(
+            hhmm,
+            now_utc=now_utc,
+            schedule_timezone=job_timezone,
+        )
         job = {
             "id": uuid4().hex[:12],
             "schedule_type": "daily",
@@ -1720,6 +1765,7 @@ class ToolExecutor:
             "tool_ref": tool_ref,
             "tool_input": tool_input,
             "description": description.strip(),
+            "timezone": timezone_name or None,
             "enabled": True,
             "created_at": now_utc.isoformat(),
             "next_run_at": next_run_at,
@@ -1823,6 +1869,7 @@ class ToolExecutor:
 
     def run_due_scheduled_jobs(self) -> list[dict[str, Any]]:
         now_utc = datetime.now(timezone.utc)
+        jobs_changed = False
         due_job_ids: list[str] = []
 
         with self.jobs_lock:
@@ -1831,13 +1878,35 @@ class ToolExecutor:
                     continue
                 if job.get("schedule_type") != "daily":
                     continue
+
+                run_timezone = self._resolve_run_timezone(job.get("timezone"))
                 run_at = self._parse_utc_ts(job.get("next_run_at"))
                 if run_at is None:
+                    hhmm = str(job.get("time", "")).strip()
+                    if hhmm:
+                        try:
+                            next_run = self._compute_next_run_utc_iso(
+                                hhmm,
+                                now_utc=now_utc,
+                                schedule_timezone=run_timezone,
+                            )
+                            run_at = self._parse_utc_ts(next_run)
+                            job["next_run_at"] = next_run
+                            jobs_changed = True
+                        except ValueError:
+                            continue
+                    else:
+                        continue
+
+                if run_at is None:
                     continue
+
                 if run_at <= now_utc:
                     due_job_ids.append(str(job.get("id", "")))
 
         if not due_job_ids:
+            if jobs_changed:
+                self._save_jobs()
             return []
 
         results: list[dict[str, Any]] = []
@@ -1861,7 +1930,11 @@ class ToolExecutor:
             status = "error" if is_error else "ok"
             now_run = datetime.now(timezone.utc)
             try:
-                next_run = self._compute_next_run_utc_iso(str(job.get("time", "00:00")), now_utc=now_run)
+                next_run = self._compute_next_run_utc_iso(
+                    str(job.get("time", "00:00")),
+                    now_utc=now_run,
+                    schedule_timezone=self._resolve_run_timezone(job.get("timezone")),
+                )
             except Exception:
                 next_run = (now_run + timedelta(days=1)).isoformat()
 
@@ -1900,6 +1973,7 @@ class ToolExecutor:
 
 def main() -> None:
     from builtin_tools import BuiltinTools
+    from codex_adapter import AdvancedWorkflowRunner, CodexCLIChat
     from config import BoramClawConfig
     from guardian import format_guardian_report, run_guardian_preflight
     from gateway import ClaudeChat as GatewayClaudeChat
@@ -1961,7 +2035,7 @@ def main() -> None:
         return
 
     config = BoramClawConfig.from_env()
-    if not config.anthropic_api_key and sys.stdin.isatty():
+    if config.llm_provider == "claude" and not config.anthropic_api_key and sys.stdin.isatty():
         config.anthropic_api_key = getpass.getpass("Anthropic API key: ").strip()
     if args.debug:
         config.debug = True
@@ -1992,6 +2066,9 @@ def main() -> None:
     token_metrics_path = Path(os.getenv("TOKEN_USAGE_FILE") or "logs/token_usage.jsonl")
     if not token_metrics_path.is_absolute():
         token_metrics_path = Path(workdir).resolve() / token_metrics_path
+    session_timeseries_path = Path(os.getenv("SESSION_TIMESERIES_FILE") or "logs/session_timeseries.jsonl")
+    if not session_timeseries_path.is_absolute():
+        session_timeseries_path = Path(workdir).resolve() / session_timeseries_path
     token_input_price = _float_env_local("TOKEN_PRICE_INPUT_PER_1M", 0.0)
     token_output_price = _float_env_local("TOKEN_PRICE_OUTPUT_PER_1M", 0.0)
 
@@ -2014,7 +2091,8 @@ def main() -> None:
     logger.log(
         "session_start",
         payload="chat started",
-        model=config.claude_model,
+        model=(config.codex_model or "codex-default") if config.llm_provider == "codex" else config.claude_model,
+        provider=config.llm_provider,
         max_tokens=config.claude_max_tokens,
         workdir=workdir,
         modular_architecture=True,
@@ -2056,13 +2134,22 @@ def main() -> None:
         tool_executor=tools,
     )
 
-    chat = GatewayClaudeChat(
-        api_key=config.anthropic_api_key,
-        model=config.claude_model,
-        max_tokens=config.claude_max_tokens,
-        system_prompt=system_prompt,
-        force_tool_use=config.force_tool_use,
-    )
+    if config.llm_provider == "codex":
+        chat = CodexCLIChat(
+            command=config.codex_command,
+            model=config.codex_model,
+            workdir=workdir,
+            system_prompt=system_prompt,
+            force_tool_use=config.force_tool_use,
+        )
+    else:
+        chat = GatewayClaudeChat(
+            api_key=config.anthropic_api_key,
+            model=config.claude_model,
+            max_tokens=config.claude_max_tokens,
+            system_prompt=system_prompt,
+            force_tool_use=config.force_tool_use,
+        )
     memory_store = LongTermMemoryStore(
         workdir=workdir,
         file_path=(os.getenv("LONG_TERM_MEMORY_FILE") or "logs/long_term_memory.jsonl"),
@@ -2075,6 +2162,13 @@ def main() -> None:
     )
     multi_agent = MultiAgentCoordinator()
     multi_agent_auto_route = _bool_env_local("MULTI_AGENT_AUTO_ROUTE", False)
+    advanced_workflows = AdvancedWorkflowRunner(
+        provider=config.advanced_provider,
+        codex_command=config.codex_command,
+        codex_model=config.codex_model,
+        workdir=workdir,
+        enabled=config.advanced_features_enabled,
+    )
 
     last_tool_snapshot = tools.get_custom_tools_snapshot()
     session_memory: list[str] = []
@@ -2101,6 +2195,57 @@ def main() -> None:
     def has_tool(tool_name: str) -> bool:
         return any(item.get("name") == tool_name for item in tools.describe_tools())
 
+    def enrich_tool_specs_for_chat(specs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        described = {str(item.get("name", "")).strip(): item for item in tools.describe_tools()}
+        enriched: list[dict[str, Any]] = []
+        for spec in specs:
+            if not isinstance(spec, dict):
+                continue
+            row = dict(spec)
+            name = str(row.get("name", "")).strip()
+            meta = described.get(name, {})
+            if isinstance(meta, dict):
+                row["source"] = meta.get("source", row.get("source", "builtin"))
+                row["file"] = meta.get("file", row.get("file", ""))
+                row["network_access"] = bool(meta.get("network_access", row.get("network_access", False)))
+                if "required" not in row:
+                    row["required"] = meta.get("required", [])
+            schema = row.get("input_schema")
+            if isinstance(schema, dict) and "required" not in row:
+                required = schema.get("required", [])
+                row["required"] = required if isinstance(required, list) else []
+            enriched.append(row)
+        return enriched
+
+    def handle_advanced_command(raw_text: str) -> str | None:
+        advanced_cmd = parse_advanced_command(raw_text)
+        if advanced_cmd is not None:
+            return advanced_workflows.render_status()
+
+        review_cmd = parse_review_command(raw_text)
+        if review_cmd is not None:
+            preset = str(review_cmd.get("preset", "engineering") or "engineering")
+            prompt = str(review_cmd.get("prompt", "")).strip()
+            return advanced_workflows.run_review(preset=preset, prompt=prompt)
+
+        wrapup_cmd = parse_wrapup_command(raw_text)
+        if wrapup_cmd is not None:
+            focus = str(wrapup_cmd.get("focus", "")).strip()
+            evidence = collect_wrapup_evidence(
+                workdir=workdir,
+                session_memory=list(session_memory),
+                timeseries_file=session_timeseries_path,
+            )
+            answer = advanced_workflows.run_wrapup(session_memory=session_memory, focus=focus, evidence=evidence)
+            record_wrapup_snapshot(focus=focus, answer=answer, evidence=evidence)
+            return answer
+
+        return None
+
+    def select_tool_specs_for_chat(prompt_text: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        selected, report = tools.select_tool_specs_for_prompt(prompt_text)
+        return enrich_tool_specs_for_chat(selected), report
+
     def append_agent_feedback(payload: dict[str, Any]) -> None:
         try:
             feedback_path = Path(workdir).resolve() / "logs" / "agent_feedback.jsonl"
@@ -2109,6 +2254,29 @@ def main() -> None:
             with feedback_path.open("a", encoding="utf-8") as fp:
                 fp.write(json.dumps(row, ensure_ascii=False) + "\n")
             append_self_heal_feedback(workdir=workdir, payload={"session_id": session_id, **payload})
+        except Exception:
+            return
+
+    def record_wrapup_snapshot(*, focus: str, answer: str, evidence: dict[str, Any] | None = None) -> None:
+        total_usage: dict[str, Any] = {}
+        get_total_usage = getattr(chat, "get_total_usage", None)
+        if callable(get_total_usage):
+            try:
+                total_usage = get_total_usage() or {}
+            except Exception:
+                total_usage = {}
+        snapshot = build_wrapup_snapshot(
+            session_id=session_id,
+            provider=config.llm_provider,
+            model=(config.codex_model or "codex-default") if config.llm_provider == "codex" else config.claude_model,
+            focus=focus,
+            answer=answer,
+            session_memory=list(session_memory),
+            usage=total_usage,
+            evidence=evidence,
+        )
+        try:
+            append_timeseries_rows(session_timeseries_path, [snapshot])
         except Exception:
             return
 
@@ -2195,7 +2363,7 @@ def main() -> None:
             result = multi_agent.handle_turn(
                 chat=chat,
                 user_input=prompt_text,
-                select_tool_specs=tools.select_tool_specs_for_prompt,
+                select_tool_specs=select_tool_specs_for_chat,
                 tool_runner=tools.run_tool,
                 on_tool_event=on_tool_event,
                 force_tool_use=tool_only_mode,
@@ -2211,7 +2379,7 @@ def main() -> None:
             )
             return str(result.get("answer", "")), schema_report
 
-        selected_tool_specs, schema_report = tools.select_tool_specs_for_prompt(prompt_text)
+        selected_tool_specs, schema_report = select_tool_specs_for_chat(prompt_text)
         logger.log(
             "tool_schema_selection",
             payload=safe_log_payload(json.dumps(schema_report, ensure_ascii=False), encrypt_key),
@@ -2256,32 +2424,36 @@ def main() -> None:
                     on_tool_event(tool_name, tool_input, result_text, is_error)
                     answer = result_text
                 else:
-                    quick_arxiv_input = parse_arxiv_quick_request(prompt)
-                    if quick_arxiv_input is not None and has_tool("arxiv_daily_digest"):
-                        result_text, is_error = tools.run_tool("arxiv_daily_digest", quick_arxiv_input)
-                        on_tool_event("arxiv_daily_digest", quick_arxiv_input, result_text, is_error)
-                        answer = result_text
+                    advanced_answer = handle_advanced_command(prompt)
+                    if advanced_answer is not None:
+                        answer = advanced_answer
                     else:
-                        quick_deep_weekly_input = parse_deep_weekly_quick_request(prompt)
-                        if quick_deep_weekly_input is not None:
-                            if not has_tool("deep_weekly_retrospective"):
-                                answer = "deep_weekly_retrospective 도구가 없습니다."
-                            else:
-                                result_text, is_error = tools.run_tool(
-                                    "deep_weekly_retrospective", quick_deep_weekly_input
-                                )
-                                on_tool_event(
-                                    "deep_weekly_retrospective",
-                                    quick_deep_weekly_input,
-                                    result_text,
-                                    is_error,
-                                )
-                                answer = result_text
+                        quick_arxiv_input = parse_arxiv_quick_request(prompt)
+                        if quick_arxiv_input is not None and has_tool("arxiv_daily_digest"):
+                            result_text, is_error = tools.run_tool("arxiv_daily_digest", quick_arxiv_input)
+                            on_tool_event("arxiv_daily_digest", quick_arxiv_input, result_text, is_error)
+                            answer = result_text
                         else:
-                            delegate_input = parse_delegate_command(prompt)
-                            delegated_turn = delegate_input is not None or multi_agent_auto_route
-                            model_prompt = delegate_input if delegate_input is not None else prompt
-                            answer, _ = run_chat_turn(prompt_text=model_prompt, delegated=delegated_turn)
+                            quick_deep_weekly_input = parse_deep_weekly_quick_request(prompt)
+                            if quick_deep_weekly_input is not None:
+                                if not has_tool("deep_weekly_retrospective"):
+                                    answer = "deep_weekly_retrospective 도구가 없습니다."
+                                else:
+                                    result_text, is_error = tools.run_tool(
+                                        "deep_weekly_retrospective", quick_deep_weekly_input
+                                    )
+                                    on_tool_event(
+                                        "deep_weekly_retrospective",
+                                        quick_deep_weekly_input,
+                                        result_text,
+                                        is_error,
+                                    )
+                                    answer = result_text
+                            else:
+                                delegate_input = parse_delegate_command(prompt)
+                                delegated_turn = delegate_input is not None or multi_agent_auto_route
+                                model_prompt = delegate_input if delegate_input is not None else prompt
+                                answer, _ = run_chat_turn(prompt_text=model_prompt, delegated=delegated_turn)
 
                 if (
                     "도구 호출 루프가 제한 횟수를 초과" in answer
@@ -2589,6 +2761,11 @@ def main() -> None:
                 emit_answer(answer)
                 continue
 
+            advanced_answer = handle_advanced_command(user_input)
+            if advanced_answer is not None:
+                emit_answer(advanced_answer)
+                continue
+
             reflexion_cmd = parse_reflexion_command(user_input)
             if reflexion_cmd is not None:
                 action = str(reflexion_cmd.get("action", ""))
@@ -2607,7 +2784,36 @@ def main() -> None:
 
             feedback_text = parse_feedback_command(user_input)
             if feedback_text is not None:
-                reflexion_store.add_feedback(text=feedback_text, source="user")
+                if has_tool("feedback_collector"):
+                    payload = {
+                        "feedback": feedback_text,
+                        "category": "general",
+                    }
+                    result_text, is_error = tools.run_tool("feedback_collector", payload)
+                    on_tool_event("feedback_collector", payload, result_text, is_error)
+                    if is_error:
+                        answer = f"피드백 저장 실패: {result_text}"
+                    else:
+                        tags: list[str] = []
+                        try:
+                            parsed_outer = json.loads(result_text) if isinstance(result_text, str) else result_text
+                            parsed_inner = parsed_outer
+                            if isinstance(parsed_outer, dict) and "result" in parsed_outer:
+                                raw_inner = parsed_outer.get("result")
+                                if isinstance(raw_inner, str):
+                                    parsed_inner = json.loads(raw_inner)
+                            if isinstance(parsed_inner, dict):
+                                raw_tags = parsed_inner.get("tags", [])
+                                if isinstance(raw_tags, list):
+                                    tags = [str(tag) for tag in raw_tags if str(tag).strip()]
+                        except Exception:
+                            tags = []
+                        tag_text = ", ".join(tags) if tags else "-"
+                        answer = f"✅ 피드백 저장됨 (태그: {tag_text})"
+                else:
+                    reflexion_store.add_feedback(text=feedback_text, source="user")
+                    answer = "피드백을 기록했습니다. 다음 자가개선 사이클에서 반영됩니다."
+
                 append_self_heal_feedback(
                     workdir=workdir,
                     payload={
@@ -2616,7 +2822,6 @@ def main() -> None:
                         "text": feedback_text,
                     },
                 )
-                answer = "피드백을 기록했습니다. 다음 자가개선 사이클에서 반영됩니다."
                 emit_answer(answer)
                 continue
 
@@ -2713,7 +2918,10 @@ def main() -> None:
                         "ts": datetime.now(timezone.utc).isoformat(),
                         "session_id": session_id,
                         "turn": logger.turn,
-                        "model": config.claude_model,
+                        "provider": config.llm_provider,
+                        "model": (config.codex_model or "codex-default")
+                        if config.llm_provider == "codex"
+                        else config.claude_model,
                         "input_tokens": input_tokens,
                         "output_tokens": output_tokens,
                         "total_tokens": total_tokens,

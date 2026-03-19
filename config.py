@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import shlex
+import shutil
 from typing import Any
 
 
@@ -87,9 +89,12 @@ def _resolve_api_key(
 
 @dataclass
 class BoramClawConfig:
+    llm_provider: str
     anthropic_api_key: str
     claude_model: str
     claude_max_tokens: int
+    codex_command: str
+    codex_model: str
     chat_log_file: str
     schedule_file: str
     tool_workdir: str
@@ -112,6 +117,8 @@ class BoramClawConfig:
     log_base_dir: str
     keychain_service_name: str
     keychain_account_name: str
+    advanced_features_enabled: bool
+    advanced_provider: str
     allow_plaintext_api_key: bool = False
     api_key_source: str = "unknown"
 
@@ -133,9 +140,12 @@ class BoramClawConfig:
             allow_plaintext_api_key=allow_plaintext_api_key,
         )
         return cls(
+            llm_provider=(os.getenv("LLM_PROVIDER") or "claude").strip().lower(),
             anthropic_api_key=resolved_key,
             claude_model=(os.getenv("CLAUDE_MODEL") or "claude-sonnet-4-5-20250929").strip(),
             claude_max_tokens=_int_env("CLAUDE_MAX_TOKENS", 1024, minimum=1),
+            codex_command=(os.getenv("CODEX_COMMAND") or "codex").strip(),
+            codex_model=(os.getenv("CODEX_MODEL") or "").strip(),
             chat_log_file=(os.getenv("CHAT_LOG_FILE") or "logs/chat_log.jsonl").strip(),
             schedule_file=(os.getenv("SCHEDULE_FILE") or "schedules/jobs.json").strip(),
             tool_workdir=(os.getenv("TOOL_WORKDIR") or ".").strip(),
@@ -158,20 +168,32 @@ class BoramClawConfig:
             log_base_dir=(os.getenv("LOG_BASE_DIR") or "logs/sessions").strip(),
             keychain_service_name=keychain_service,
             keychain_account_name=keychain_account,
+            advanced_features_enabled=_bool_env("ADVANCED_FEATURES_ENABLED", True),
+            advanced_provider=(os.getenv("ADVANCED_PROVIDER") or "codex").strip().lower(),
             allow_plaintext_api_key=allow_plaintext_api_key,
             api_key_source=key_source,
         )
 
     def validate(self) -> list[str]:
         errors: list[str] = []
-        if not self.anthropic_api_key:
-            errors.append("ANTHROPIC_API_KEY 값이 필요합니다.")
-        elif not self.anthropic_api_key.startswith("sk-ant-"):
-            errors.append("ANTHROPIC_API_KEY는 'sk-ant-'로 시작해야 합니다.")
+        if self.llm_provider not in {"claude", "codex"}:
+            errors.append("LLM_PROVIDER는 'claude' 또는 'codex'여야 합니다.")
+        if self.advanced_provider not in {"codex"}:
+            errors.append("ADVANCED_PROVIDER는 현재 'codex'만 지원합니다.")
 
-        valid_markers = ("claude-sonnet", "claude-opus", "claude-haiku")
-        if not any(marker in self.claude_model for marker in valid_markers):
-            errors.append("CLAUDE_MODEL에는 claude-sonnet, claude-opus, claude-haiku 중 하나가 포함되어야 합니다.")
+        if self.llm_provider == "claude":
+            if not self.anthropic_api_key:
+                errors.append("LLM_PROVIDER=claude 에서는 ANTHROPIC_API_KEY 값이 필요합니다.")
+            elif not self.anthropic_api_key.startswith("sk-ant-"):
+                errors.append("ANTHROPIC_API_KEY는 'sk-ant-'로 시작해야 합니다.")
+
+            valid_markers = ("claude-sonnet", "claude-opus", "claude-haiku")
+            if not any(marker in self.claude_model for marker in valid_markers):
+                errors.append("CLAUDE_MODEL에는 claude-sonnet, claude-opus, claude-haiku 중 하나가 포함되어야 합니다.")
+        elif self.llm_provider == "codex":
+            codex_parts = shlex.split(self.codex_command.strip()) or ["codex"]
+            if shutil.which(codex_parts[0]) is None:
+                errors.append(f"LLM_PROVIDER=codex 이지만 Codex CLI를 찾을 수 없습니다: {self.codex_command}")
 
         if self.tool_timeout_seconds <= 0:
             errors.append("TOOL_TIMEOUT_SECONDS는 0보다 커야 합니다.")
@@ -241,8 +263,11 @@ class BoramClawConfig:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "llm_provider": self.llm_provider,
             "claude_model": self.claude_model,
             "claude_max_tokens": self.claude_max_tokens,
+            "codex_command": self.codex_command,
+            "codex_model": self.codex_model,
             "chat_log_file": self.chat_log_file,
             "schedule_file": self.schedule_file,
             "tool_workdir": self.tool_workdir,
@@ -260,6 +285,8 @@ class BoramClawConfig:
             "check_dependencies_on_start": self.check_dependencies_on_start,
             "session_log_split": self.session_log_split,
             "log_base_dir": self.log_base_dir,
+            "advanced_features_enabled": self.advanced_features_enabled,
+            "advanced_provider": self.advanced_provider,
             "allow_plaintext_api_key": self.allow_plaintext_api_key,
             "api_key_source": self.api_key_source,
         }

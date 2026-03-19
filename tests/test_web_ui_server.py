@@ -26,7 +26,19 @@ class TestWebUIServer(unittest.TestCase):
         finally:
             server.stop()
 
+    def test_web_ui_index_contains_advanced_actions(self) -> None:
+        server = start_web_ui_server(lambda msg: f"echo:{msg}", port=0)
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{server.port}/", timeout=5) as resp:
+                html = resp.read().decode("utf-8")
+            self.assertIn("/advanced", html)
+            self.assertIn("/review engineering", html)
+            self.assertIn("/review pm", html)
+            self.assertIn("/review cpo", html)
+            self.assertIn("/wrapup", html)
+        finally:
+            server.stop()
+
 
 if __name__ == "__main__":
     unittest.main()
-

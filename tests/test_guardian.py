@@ -14,9 +14,12 @@ def _make_config(case_root: Path, health_port: int = 8080) -> BoramClawConfig:
     tools_dir = case_root / "tools"
     tools_dir.mkdir(parents=True, exist_ok=True)
     return BoramClawConfig(
+        llm_provider="claude",
         anthropic_api_key="sk-ant-test-key",
         claude_model="claude-sonnet-4-5-20250929",
         claude_max_tokens=1024,
+        codex_command="codex",
+        codex_model="",
         chat_log_file=str(case_root / "logs" / "chat.jsonl"),
         schedule_file=str(case_root / "schedules" / "jobs.json"),
         tool_workdir=str(case_root),
@@ -39,6 +42,8 @@ def _make_config(case_root: Path, health_port: int = 8080) -> BoramClawConfig:
         log_base_dir=str(case_root / "logs" / "sessions"),
         keychain_service_name="BoramClaw",
         keychain_account_name="anthropic_api_key",
+        advanced_features_enabled=True,
+        advanced_provider="codex",
     )
 
 

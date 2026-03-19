@@ -5,14 +5,18 @@ import unittest
 from runtime_commands import (
     format_permissions_map,
     format_user_output,
+    parse_advanced_command,
     parse_arxiv_quick_request,
     parse_deep_weekly_quick_request,
+    parse_delegate_command,
     parse_feedback_command,
     parse_memory_command,
     parse_reflexion_command,
+    parse_review_command,
     parse_schedule_arxiv_command,
     parse_set_permission_command,
     parse_tool_command,
+    parse_wrapup_command,
 )
 
 
@@ -32,6 +36,16 @@ class TestRuntimeCommands(unittest.TestCase):
         self.assertEqual(parse_feedback_command("/feedback 루프 개선해"), "루프 개선해")
         with self.assertRaises(ValueError):
             parse_feedback_command("/feedback")
+
+    def test_parse_advanced_review_and_wrapup_commands(self) -> None:
+        self.assertEqual(parse_advanced_command("/advanced"), {"action": "status"})
+        self.assertEqual(parse_delegate_command("/delegate 빌더에게 넘겨"), "빌더에게 넘겨")
+        self.assertEqual(
+            parse_review_command("/review cpo 현재 변경사항 봐줘"),
+            {"preset": "cpo", "prompt": "현재 변경사항 봐줘"},
+        )
+        self.assertEqual(parse_review_command("/review 현재 변경사항 봐줘"), {"preset": "engineering", "prompt": "현재 변경사항 봐줘"})
+        self.assertEqual(parse_wrapup_command("/wrapup 오늘 세션 정리"), {"focus": "오늘 세션 정리"})
 
     def test_parse_arxiv_quick_request(self) -> None:
         payload = parse_arxiv_quick_request("아카이브에서 DeepSeek 관련 논문 2개 요약해줘")

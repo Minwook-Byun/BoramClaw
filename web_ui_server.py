@@ -21,9 +21,11 @@ HTML_PAGE = """<!doctype html>
     .card { background: #fff; border-radius: 12px; box-shadow: 0 10px 30px rgba(16,24,40,.08); padding: 16px; }
     h1 { margin: 0 0 12px; font-size: 22px; }
     .row { display: flex; gap: 10px; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
     textarea { width: 100%; min-height: 96px; border: 1px solid #d0d5dd; border-radius: 10px; padding: 10px; resize: vertical; }
     button { border: 0; border-radius: 10px; padding: 10px 16px; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: .6; cursor: not-allowed; }
+    .ghost { background: #e5eefc; color: #163b72; }
     pre { white-space: pre-wrap; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 12px; min-height: 160px; overflow: auto; }
     .meta { margin-top: 8px; color: #475467; font-size: 13px; }
   </style>
@@ -38,6 +40,15 @@ HTML_PAGE = """<!doctype html>
       <div class="row" style="margin-top:10px">
         <button id="askBtn" type="button">질문 보내기</button>
       </div>
+      <div class="quick-actions">
+        <button class="ghost" type="button" data-fill="/context">현재 컨텍스트</button>
+        <button class="ghost" type="button" data-fill="/today">오늘 리포트</button>
+        <button class="ghost" type="button" data-fill="/advanced">Advanced 상태</button>
+        <button class="ghost" type="button" data-fill="/review engineering 현재 변경사항에서 회귀 위험 중심으로 리뷰해줘">Engineering 리뷰</button>
+        <button class="ghost" type="button" data-fill="/review pm 사용자 흐름 기준으로 모호한 점 찾아줘">PM 리뷰</button>
+        <button class="ghost" type="button" data-fill="/review cpo activation과 retention 관점에서 위험 찾아줘">CPO 리뷰</button>
+        <button class="ghost" type="button" data-fill="/wrapup 오늘 세션 정리">세션 랩업</button>
+      </div>
       <div class="meta" id="meta"></div>
       <pre id="out"></pre>
     </div>
@@ -47,6 +58,12 @@ HTML_PAGE = """<!doctype html>
     const msg = document.getElementById("msg");
     const out = document.getElementById("out");
     const meta = document.getElementById("meta");
+    for (const btn of document.querySelectorAll("[data-fill]")) {
+      btn.addEventListener("click", () => {
+        msg.value = btn.getAttribute("data-fill") || "";
+        msg.focus();
+      });
+    }
     async function ask() {
       const text = msg.value.trim();
       if (!text) return;

@@ -60,6 +60,34 @@ _IGNORE_DOMAINS = {
     "chrome", "about", "blob", "data",
 }
 
+# YouTube 도메인
+_YOUTUBE_DOMAINS = {"youtube.com", "m.youtube.com", "youtu.be"}
+
+# 검색 엔진 도메인 → 쿼리 파라미터
+_SEARCH_ENGINES = {
+    "google.com": "q",
+    "google.co.kr": "q",
+    "naver.com": "query",
+    "search.naver.com": "query",
+    "bing.com": "q",
+    "duckduckgo.com": "q",
+    "perplexity.ai": "q",
+}
+
+# 학습/개발 플랫폼
+_LEARNING_DOMAINS = {
+    "udemy.com", "coursera.org", "youtube.com", "m.youtube.com",
+    "medium.com", "dev.to", "hashnode.dev", "velog.io",
+    "arxiv.org", "huggingface.co", "kaggle.com",
+}
+
+# 개발 리서치 도메인
+_DEV_RESEARCH_DOMAINS = {
+    "github.com", "stackoverflow.com", "docs.python.org",
+    "developer.mozilla.org", "npmjs.com", "pypi.org",
+    "docs.anthropic.com", "platform.openai.com",
+}
+
 
 def _safe_copy_db(db_path: str) -> str | None:
     """브라우저가 잠근 DB를 임시 파일로 복사."""
@@ -240,6 +268,116 @@ def _topic_clusters(entries: list[dict], min_size: int) -> list[dict]:
     return result
 
 
+def _extract_youtube_activity(entries: list[dict]) -> list[dict]:
+    """YouTube 활동 추출 (영상 제목, 채널 추정)."""
+    youtube_entries = []
+    for e in entries:
+        try:
+            parsed = urlparse(e["url"])
+            domain = parsed.netloc.lower().replace("www.", "")
+            if domain not in _YOUTUBE_DOMAINS:
+                continue
+
+            title = e.get("title", "")
+            # YouTube 제목에서 " - YouTube" 제거
+            if title.endswith(" - YouTube"):
+                title = title[:-10].strip()
+
+            # 검색 페이지 구분
+            is_search = "/results" in parsed.path or "search_query" in parsed.query
+            # 영상 시청 구분
+            is_video = "/watch" in parsed.path or "v=" in parsed.query
+
+            entry_type = "search" if is_search else ("video" if is_video else "browse")
+
+            youtube_entries.append({
+                "title": title,
+                "url": e["url"],
+                "type": entry_type,
+                "timestamp": e.get("timestamp", ""),
+            })
+        except Exception:
+            continue
+
+    return youtube_entries
+
+
+def _extract_search_queries(entries: list[dict]) -> list[dict]:
+    """검색 엔진 쿼리 추출."""
+    from urllib.parse import parse_qs
+
+    queries = []
+    seen_queries: set[str] = set()
+
+    for e in entries:
+        try:
+            parsed = urlparse(e["url"])
+            domain = parsed.netloc.lower().replace("www.", "")
+
+            param_name = None
+            for engine_domain, param in _SEARCH_ENGINES.items():
+                if engine_domain in domain:
+                    param_name = param
+                    break
+
+            if not param_name:
+                continue
+
+            qs = parse_qs(parsed.query)
+            query_values = qs.get(param_name, [])
+            if not query_values:
+                continue
+
+            query = query_values[0].strip()
+            if not query or query in seen_queries:
+                continue
+            seen_queries.add(query)
+
+            queries.append({
+                "query": query,
+                "engine": domain,
+                "timestamp": e.get("timestamp", ""),
+            })
+        except Exception:
+            continue
+
+    return queries
+
+
+def _classify_browsing_activity(entries: list[dict]) -> dict[str, list[dict]]:
+    """브라우징 활동 분류: 학습/개발/검색/기타."""
+    classified: dict[str, list[dict]] = {
+        "learning": [],
+        "dev_research": [],
+        "search": [],
+        "other": [],
+    }
+
+    for e in entries:
+        try:
+            parsed = urlparse(e["url"])
+            domain = parsed.netloc.lower().replace("www.", "")
+
+            if domain in _IGNORE_DOMAINS:
+                continue
+
+            # 검색 엔진
+            if any(eng in domain for eng in _SEARCH_ENGINES):
+                classified["search"].append(e)
+            # 학습 플랫폼
+            elif any(ld in domain for ld in _LEARNING_DOMAINS):
+                classified["learning"].append(e)
+            # 개발 리서치
+            elif any(dd in domain for dd in _DEV_RESEARCH_DOMAINS):
+                classified["dev_research"].append(e)
+            else:
+                classified["other"].append(e)
+        except Exception:
+            continue
+
+    return classified
+
+
 def run(input_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     hours = input_data.get("hours", 24)
     browser = input_data.get("browser", "all")
@@ -282,6 +420,17 @@ def run(input_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
             pass
     top_domains = sorted(domain_count.items(), key=lambda x: x[1], reverse=True)[:10]
 
+    # YouTube 활동 추출
+    youtube_activity = _extract_youtube_activity(unique_entries)
+    youtube_videos = [y for y in youtube_activity if y["type"] == "video"]
+    youtube_searches = [y for y in youtube_activity if y["type"] == "search"]
+
+    # 검색 쿼리 추출
+    search_queries = _extract_search_queries(unique_entries)
+
+    # 활동 분류
+    activity_breakdown = _classify_browsing_activity(unique_entries)
+
     return {
         "ok": True,
         "period": f"최근 {hours}시간",
@@ -290,6 +439,20 @@ def run(input_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         "top_domains": [{"domain": d, "count": c} for d, c in top_domains],
         "domain_clusters": domain_clusters,
         "time_sessions": time_sessions,
+        # 새로 추가된 섹션
+        "youtube": {
+            "total_videos": len(youtube_videos),
+            "total_searches": len(youtube_searches),
+            "videos": youtube_videos[:20],
+            "searches": youtube_searches[:10],
+        },
+        "search_queries": search_queries[:30],
+        "activity_breakdown": {
+            "learning": len(activity_breakdown["learning"]),
+            "dev_research": len(activity_breakdown["dev_research"]),
+            "search": len(activity_breakdown["search"]),
+            "other": len(activity_breakdown["other"]),
+        },
     }
 
 

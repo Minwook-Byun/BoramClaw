@@ -71,6 +71,21 @@ Claude: [get_current_context 툴 자동 호출]
         최근 30분간 python3를 25회 실행했습니다.
 ```
 
+### 5. Codex-backed Advanced Workflows
+
+- `/advanced` - advanced 워크플로우 상태 확인
+- `/review engineering|pm|cpo` - Codex CLI 기반 역할별 리뷰
+- `/wrapup` - 프롬프트/로컬 Git/workdir evidence를 포함한 세션 랩업 및 다음 액션 정리
+- `/delegate` - 기존 멀티에이전트 라우팅과 함께 사용
+- `LLM_PROVIDER=codex` 시 선택된 BoramClaw tool schema를 manifest로 Codex에 전달
+- `/wrapup` 결과와 Codex rollout 분석값은 `logs/session_timeseries.jsonl`에 누적 가능
+- `python3 tools/daily_retrospective_post.py --tool-context-json '{"workdir":"."}' --tool-input-json '{"target_date":"2026-03-12"}'` 로 특정 날짜의 상세 회고 Markdown + AutoDashboard 포스트를 생성 가능
+- `python3 session_timeseries.py --backfill-codex --start-date 2026-03-09 --end-date 2026-03-12 --workdir .` 로 Codex 세션 백필 가능
+- `python3 session_timeseries.py --render-svg --workdir . --input-file logs/session_timeseries.jsonl --svg-output logs/reviews/session_timeseries.svg --kinds codex_rollout` 로 정적 SVG 시각화 생성 가능
+- `python3 tools/autodashboard_timeseries_sync.py --tool-context-json '{"workdir":"."}'` 로 AutoDashboard `snapshots.jsonl` 또는 append API에 동기화 가능
+- `python3 tools/daily_wrapup_pipeline.py --tool-context-json '{"workdir":"."}'` 로 당일 Codex rollout 백필 + evidence-first wrapup + 상세 회고 포스트 + AutoDashboard 동기화를 한 번에 실행 가능
+- `python3 install_autodashboard_sync.py --install --start-at 2026-03-13T18:30:00+09:00` 로 macOS `launchd`에 매일 18:30 KST 자동 wrapup + 회고 포스팅 + 누적 동기화 등록 가능
+
 ## 🏗️ Architecture
 
 ```
@@ -130,10 +145,14 @@ brew install screenpipe
 ```bash
 # .env 파일 생성
 cat > .env << EOF
+LLM_PROVIDER=claude
 ANTHROPIC_API_KEY=your_api_key_here
+CODEX_COMMAND=codex
 CUSTOM_TOOL_DIR=tools
 TOOL_WORKDIR=.
 SCREENPIPE_API_URL=http://localhost:3030
+ADVANCED_FEATURES_ENABLED=1
+ADVANCED_PROVIDER=codex
 EOF
 ```
 

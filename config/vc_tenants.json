@@ -1,0 +1,23 @@
+{
+  "tenants": [
+    {
+      "startup_id": "acme",
+      "display_name": "Acme AI",
+      "gateway_url": "http://127.0.0.1:8742",
+      "folder_alias": "desktop_common",
+      "allowed_doc_types": [
+        "business_registration",
+        "ir_deck",
+        "tax_invoice",
+        "social_insurance",
+        "investment_decision"
+      ],
+      "email_recipients": [
+        "partner@vc.com",
+        "ops@vc.com"
+      ],
+      "active": true
+    }
+  ]
+}
+

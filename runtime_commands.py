@@ -46,6 +46,11 @@ def format_tool_list(executor: Any) -> str:
     lines.append("스케줄 목록 예시: /schedules")
     lines.append("arXiv 일일 스케줄 예시: /schedule-arxiv 08:00 deepseek llm")
     lines.append("깊은 주간 회고 예시: 이번 주 깊이 있는 회고 작성해줘")
+    lines.append("Advanced 상태 예시: /advanced")
+    lines.append("Codex 리뷰 예시: /review engineering 현재 변경사항에서 회귀 위험 봐줘")
+    lines.append("CPO 리뷰 예시: /review cpo 이 변경이 activation과 retention에 미치는 영향 봐줘")
+    lines.append("PM 리뷰 예시: /review pm 사용자 흐름 기준으로 모호한 점 찾아줘")
+    lines.append("세션 랩업 예시: /wrapup 오늘 남은 TODO 정리")
     lines.append("Semantic snapshot 예시: /tool semantic_web_snapshot {\"url\":\"https://arxiv.org\"}")
     lines.append("온체인 조회 예시: /tool onchain_wallet_snapshot {\"network\":\"ethereum\",\"address\":\"0x...\"}")
     lines.append("텔레그램 전송 예시: /tool telegram_send_message {\"text\":\"안녕하세요\"}")
@@ -183,6 +188,50 @@ def parse_delegate_command(text: str) -> str | None:
     if not payload:
         raise ValueError("사용법: /delegate <요청>")
     return payload
+
+
+def parse_advanced_command(text: str) -> dict[str, Any] | None:
+    normalized = text.strip()
+    lowered = normalized.lower()
+    if lowered not in {"/advanced", "/advanced status", "/advanced help"}:
+        return None
+    action = "status"
+    if lowered.endswith("help"):
+        action = "help"
+    return {"action": action}
+
+
+def parse_review_command(text: str) -> dict[str, Any] | None:
+    normalized = text.strip()
+    if not normalized.lower().startswith("/review"):
+        return None
+    payload = normalized[len("/review") :].strip()
+    preset = "engineering"
+    aliases = {
+        "eng": "engineering",
+        "engineering": "engineering",
+        "pm": "pm",
+        "product": "pm",
+        "cpo": "cpo",
+    }
+    if payload:
+        parts = payload.split(maxsplit=1)
+        candidate = parts[0].strip().lower()
+        if candidate in aliases:
+            preset = aliases[candidate]
+            payload = parts[1].strip() if len(parts) > 1 else ""
+    return {"preset": preset, "prompt": payload}
+
+
+def parse_wrapup_command(text: str) -> dict[str, Any] | None:
+    normalized = text.strip()
+    lowered = normalized.lower()
+    prefixes = ("/wrapup", "/wrap-up", "/session-wrap", "/session-wrapup")
+    matched = next((prefix for prefix in prefixes if lowered.startswith(prefix)), None)
+    if matched is None:
+        return None
+    payload = normalized[len(matched) :].strip()
+    return {"focus": payload}
 
 
 def parse_schedule_arxiv_command(text: str) -> dict[str, Any] | None:

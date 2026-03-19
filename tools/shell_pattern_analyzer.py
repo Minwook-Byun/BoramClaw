@@ -188,6 +188,7 @@ def run(input_data: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         "period": f"최근 {days}일",
         "total_commands": len(entries),
         "unique_commands": len(full_cmds),
+        "all_commands": entries,
         "top_commands": [{"command": c, "count": n} for c, n in top_commands],
         "time_distribution": time_distribution,
         "alias_suggestions": alias_suggestions,

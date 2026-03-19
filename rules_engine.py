@@ -86,13 +86,26 @@ class RulesEngine:
         # Context 조회
         context = self.context_engine.get_current_context(repo_path=repo_path)
         session = self.context_engine.detect_work_session(repo_path=repo_path)
+        shell_data = context.get("activities", {}).get("shell", {})
+        top_commands = shell_data.get("top_commands", []) if isinstance(shell_data, dict) else []
+        top_command = ""
+        if isinstance(top_commands, list) and top_commands:
+            top = top_commands[0]
+            if isinstance(top, dict):
+                top_command = str(top.get("command", "")).strip()
+        if isinstance(shell_data, dict):
+            if top_command:
+                shell_data["top_command"] = top_command
+            shell_data["is_coding"] = top_command in {"python3", "python", "node"}
 
         # 평가용 데이터 구성
         eval_data = {
             "context": context,
             "session": session,
+            "primary_activity": context.get("primary_activity", context.get("summary", {}).get("primary_activity")),
+            "last_activity_minutes_ago": context.get("last_activity_minutes_ago"),
             "git": context.get("activities", {}).get("git", {}),
-            "shell": context.get("activities", {}).get("shell", {}),
+            "shell": shell_data,
             "browser": context.get("activities", {}).get("browser", {}),
             "time": {
                 "hour": datetime.now().hour,
@@ -112,7 +125,8 @@ class RulesEngine:
             # 조건 평가
             if self._evaluate_trigger(rule.get("trigger", {}), eval_data):
                 # 이미 최근에 트리거된 규칙은 스킵 (중복 방지)
-                if self._should_skip_duplicate(rule_name):
+                cooldown_minutes = int(rule.get("cooldown", rule.get("cooldown_minutes", 60)) or 60)
+                if self._should_skip_duplicate(rule_name, cooldown_minutes=max(1, cooldown_minutes)):
                     continue
 
                 # 액션 실행

@@ -60,6 +60,8 @@ class ContextEngine:
         context = {
             "timestamp": datetime.now().isoformat(),
             "lookback_minutes": self.lookback_minutes,
+            "last_activity_minutes_ago": None,
+            "primary_activity": "unknown",
             "activities": {},
             "summary": {},
             "errors": [],
@@ -72,17 +74,26 @@ class ContextEngine:
                 {}
             )
             if git_result.get("ok"):
-                recent_commits = git_result.get("recent_commits", [])
+                recent_commits = git_result.get("recent_commits") or git_result.get("commits", [])
                 if recent_commits:
                     # 최근 커밋의 변경 파일 추출
                     changed_files = []
                     for commit in recent_commits[:3]:  # 최근 3개 커밋
-                        files = commit.get("files_changed", [])
+                        files = commit.get("files_changed") or commit.get("files", [])
                         changed_files.extend(files)
+
+                    normalized_files: list[str] = []
+                    for file_item in changed_files:
+                        if isinstance(file_item, str):
+                            normalized_files.append(file_item)
+                        elif isinstance(file_item, dict):
+                            file_path = str(file_item.get("file", "")).strip()
+                            if file_path:
+                                normalized_files.append(file_path)
 
                     context["activities"]["git"] = {
                         "recent_commits": len(recent_commits),
-                        "changed_files": list(set(changed_files))[:10],
+                        "changed_files": list(set(normalized_files))[:10],
                         "latest_commit_message": recent_commits[0].get("message", "") if recent_commits else "",
                         "latest_commit_time": recent_commits[0].get("date", "") if recent_commits else "",
                     }
@@ -97,8 +108,18 @@ class ContextEngine:
             )
             if shell_result.get("ok"):
                 all_commands = shell_result.get("all_commands", [])
+                now_ts = datetime.now().timestamp()
+                latest_ts = 0.0
+                for cmd in all_commands:
+                    try:
+                        latest_ts = max(latest_ts, float(cmd.get("timestamp", 0) or 0))
+                    except (TypeError, ValueError):
+                        continue
+                if latest_ts > 0:
+                    context["last_activity_minutes_ago"] = max(0, int((now_ts - latest_ts) / 60))
+
                 # 최근 N분 이내 명령어만 필터링
-                cutoff_time = datetime.now().timestamp() - (self.lookback_minutes * 60)
+                cutoff_time = now_ts - (self.lookback_minutes * 60)
                 recent_commands = [
                     cmd for cmd in all_commands
                     if cmd.get("timestamp", 0) >= cutoff_time
@@ -108,13 +129,17 @@ class ContextEngine:
                     # 최근 명령어 패턴 분석
                     command_names = [cmd.get("command", "").split()[0] for cmd in recent_commands]
                     command_counts = Counter(command_names)
+                    top_commands = [
+                        {"command": cmd, "count": count}
+                        for cmd, count in command_counts.most_common(5)
+                    ]
+                    top_command = top_commands[0]["command"] if top_commands else ""
 
                     context["activities"]["shell"] = {
                         "recent_commands_count": len(recent_commands),
-                        "top_commands": [
-                            {"command": cmd, "count": count}
-                            for cmd, count in command_counts.most_common(5)
-                        ],
+                        "top_commands": top_commands,
+                        "top_command": top_command,
+                        "is_coding": top_command in {"python3", "python", "node"},
                         "latest_commands": [
                             cmd.get("command", "") for cmd in recent_commands[-5:]
                         ],
@@ -173,6 +198,7 @@ class ContextEngine:
 
         # Summary 생성
         context["summary"] = self._generate_summary(context)
+        context["primary_activity"] = context["summary"].get("primary_activity", "unknown")
 
         return context
 
@@ -283,6 +309,8 @@ class ContextEngine:
             "duration_minutes": 0,
             "activity_count": 0,
             "session_type": "unknown",
+            "last_break_minutes_ago": None,
+            "consecutive_focus_minutes": 0,
         }
 
         # Shell 명령어 기록으로 세션 감지
@@ -293,34 +321,56 @@ class ContextEngine:
             )
             if shell_result.get("ok"):
                 all_commands = shell_result.get("all_commands", [])
-                if all_commands:
-                    # 가장 오래된 명령어 찾기
-                    oldest_cmd = min(all_commands, key=lambda x: x.get("timestamp", float("inf")))
-                    newest_cmd = max(all_commands, key=lambda x: x.get("timestamp", 0))
+                timestamps: list[float] = []
+                command_names: list[str] = []
+                for cmd in all_commands:
+                    try:
+                        ts = float(cmd.get("timestamp", 0) or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if ts <= 0:
+                        continue
+                    timestamps.append(ts)
+                    command_names.append(cmd.get("command", "").split()[0])
 
-                    oldest_time = oldest_cmd.get("timestamp", 0)
-                    newest_time = newest_cmd.get("timestamp", 0)
+                if timestamps:
+                    timestamps.sort()
+                    oldest_time = timestamps[0]
+                    newest_time = timestamps[-1]
 
-                    duration_seconds = newest_time - oldest_time
-                    duration_minutes = duration_seconds / 60
+                    duration_seconds = max(0.0, newest_time - oldest_time)
+                    duration_minutes = int(duration_seconds / 60)
+                    session["duration_minutes"] = duration_minutes
+                    session["activity_count"] = len(timestamps)
 
                     if duration_minutes >= min_duration_minutes:
                         session["is_session_active"] = True
                         session["start_time"] = datetime.fromtimestamp(oldest_time).isoformat()
-                        session["duration_minutes"] = int(duration_minutes)
-                        session["activity_count"] = len(all_commands)
 
-                        # 세션 타입 추론
-                        command_names = [cmd.get("command", "").split()[0] for cmd in all_commands]
-                        command_counts = Counter(command_names)
-                        top_cmd = command_counts.most_common(1)[0][0] if command_counts else ""
+                    # 가장 최근 30분 이상 공백 탐지
+                    last_break_end_ts: Optional[float] = None
+                    for idx in range(1, len(timestamps)):
+                        if timestamps[idx] - timestamps[idx - 1] >= 30 * 60:
+                            last_break_end_ts = timestamps[idx]
 
-                        if top_cmd in {"python3", "python", "node", "npm", "cargo", "go"}:
-                            session["session_type"] = "development"
-                        elif top_cmd in {"git", "gh"}:
-                            session["session_type"] = "version_control"
-                        else:
-                            session["session_type"] = "general"
+                    if last_break_end_ts is not None:
+                        now_ts = datetime.now().timestamp()
+                        last_break_minutes_ago = max(0, int((now_ts - last_break_end_ts) / 60))
+                        session["last_break_minutes_ago"] = last_break_minutes_ago
+                        session["consecutive_focus_minutes"] = last_break_minutes_ago
+                    else:
+                        session["last_break_minutes_ago"] = None
+                        session["consecutive_focus_minutes"] = duration_minutes
+
+                    # 세션 타입 추론
+                    command_counts = Counter(command_names)
+                    top_cmd = command_counts.most_common(1)[0][0] if command_counts else ""
+                    if top_cmd in {"python3", "python", "node", "npm", "cargo", "go"}:
+                        session["session_type"] = "development"
+                    elif top_cmd in {"git", "gh"}:
+                        session["session_type"] = "version_control"
+                    else:
+                        session["session_type"] = "general"
         except Exception:
             pass
 

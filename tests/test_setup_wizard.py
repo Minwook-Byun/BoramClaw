@@ -31,6 +31,9 @@ class TestSetupWizard(unittest.TestCase):
         text = env_path.read_text(encoding="utf-8")
         self.assertIn("ANTHROPIC_API_KEY=sk-ant-test", text)
         self.assertIn("CLAUDE_MODEL=claude-sonnet-4-5-20250929", text)
+        self.assertIn("LLM_PROVIDER=claude", text)
+        self.assertIn("CODEX_COMMAND=codex", text)
+        self.assertIn("ADVANCED_FEATURES_ENABLED=1", text)
         self.assertIn("TOOL_WORKDIR=.", text)
 
 

@@ -18,7 +18,7 @@ rules:
     trigger:
       type: context_based
       conditions:
-        - field: session.is_active
+        - field: session.is_session_active
           operator: equals
           value: true
         - field: session.duration_minutes
@@ -49,12 +49,9 @@ rules:
     trigger:
       type: inactivity
       conditions:
-        - field: context.last_activity_minutes_ago
+        - field: last_activity_minutes_ago
           operator: greater_than
           value: 30
-        - field: session.was_active
-          operator: equals
-          value: true
 
     actions:
       - type: notification
@@ -101,15 +98,18 @@ rules:
     trigger:
       type: context_based
       conditions:
-        - field: context.primary_activity
+        - field: primary_activity
           operator: equals
           value: "research"
         - field: session.duration_minutes
           operator: greater_than
           value: 60
-        - field: shell.recent_coding_commands
-          operator: equals
-          value: 0
+        - field: shell.top_command
+          operator: not_equals
+          value: "python3"
+        - field: shell.top_command
+          operator: not_equals
+          value: "node"
 
     actions:
       - type: notification
@@ -168,7 +168,7 @@ rules:
     trigger:
       type: context_based
       conditions:
-        - field: session.is_active
+        - field: session.is_session_active
           operator: equals
           value: true
         - field: session.duration_minutes
@@ -185,7 +185,52 @@ rules:
           message: "2시간째 작업 중입니다. 잠시 휴식하세요!"
           sound: "Glass"
 
-  # 8. 심야 작업 알림
+  # 8. 컨텍스트 스위칭 과부하 감지
+  - name: context_switch_overload
+    description: "연속 집중 시간이 짧고 활동 수가 많을 때 집중 블록 권장"
+    enabled: true
+    priority: medium
+    cooldown: 120
+
+    trigger:
+      type: context_based
+      conditions:
+        - field: session.consecutive_focus_minutes
+          operator: less_than
+          value: 30
+        - field: session.activity_count
+          operator: greater_than
+          value: 10
+
+    actions:
+      - type: notification
+        params:
+          title: "🎯 집중 블록 권장"
+          message: "작업 전환이 잦습니다. 25분 집중 블록을 시작해보세요."
+          sound: "Ping"
+
+  # 9. 장시간 집중 보상 알림
+  - name: long_focus_reward
+    description: "90분 이상 연속 집중 시 휴식 권장"
+    enabled: true
+    priority: medium
+    cooldown: 120
+
+    trigger:
+      type: context_based
+      conditions:
+        - field: session.consecutive_focus_minutes
+          operator: greater_than_or_equal
+          value: 90
+
+    actions:
+      - type: notification
+        params:
+          title: "🏆 집중 달성"
+          message: "90분 집중 작업! 15분 휴식을 권장합니다."
+          sound: "Glass"
+
+  # 10. 심야 작업 알림
   - name: late_night_warning
     description: "새벽 2시 이후 작업 시 수면 권장"
     enabled: true
@@ -203,6 +248,76 @@ rules:
           title: "🌙 수면 권장"
           message: "새벽 2시입니다. 내일을 위해 휴식하세요."
           sound: "Submarine"
+
+  # 11. No Surprise: 수요일 목표 갭 체크 (Meta Impact 원칙)
+  - name: no_surprise_midweek_check
+    description: "수요일에 주간 목표 진척도를 확인하고 갭 알림"
+    enabled: true
+    priority: high
+    cooldown: 720  # 12시간
+
+    trigger:
+      type: time_based
+      schedule:
+        time: "14:00"
+        days: ["wed"]
+
+    actions:
+      - type: tool_call
+        params:
+          tool_name: "weekly_goal_manager"
+          tool_input:
+            action: "check"
+
+      - type: notification
+        params:
+          title: "⚖️ No Surprise 체크"
+          message: "수요일 점검: 이번 주 Impact 목표 진척도를 확인하세요."
+          sound: "Glass"
+
+  # 12. 금요일 주간 Impact 평가 (Meta 원칙)
+  - name: friday_impact_evaluation
+    description: "매주 금요일 오후 5시에 주간 Impact 평가 실행"
+    enabled: true
+    priority: high
+
+    trigger:
+      type: time_based
+      schedule:
+        time: "17:00"
+        days: ["fri"]
+
+    actions:
+      - type: tool_call
+        params:
+          tool_name: "weekly_goal_manager"
+          tool_input:
+            action: "evaluate"
+
+      - type: notification
+        params:
+          title: "📊 주간 Impact 평가"
+          message: "금요일 평가: Activity vs Impact 결산 시간입니다."
+          sound: "Hero"
+
+  # 13. 월요일 아침 주간 목표 선언 리마인더
+  - name: monday_goal_declaration
+    description: "월요일 오전에 주간 Impact 목표 선언 리마인더"
+    enabled: true
+    priority: high
+
+    trigger:
+      type: time_based
+      schedule:
+        time: "09:00"
+        days: ["mon"]
+
+    actions:
+      - type: notification
+        params:
+          title: "🎯 주간 목표 선언"
+          message: "Meta 원칙: 이번 주 Impact 목표를 선언하세요. weekly_goal_manager(action='declare')"
+          sound: "Glass"
 
 # 조건 연산자:
 # - equals: 같음

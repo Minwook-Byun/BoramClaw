@@ -50,9 +50,16 @@ htmlcov/
 
 # Schedules and data
 schedules/
+data/
+tasks/
+vault/
 *.db
 *.sqlite
 *.sqlite3
+
+# Virtual environments
+.venv/
+.tmp_pdf_venv/
 
 # IDE
 .vscode/
