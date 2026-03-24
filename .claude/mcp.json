@@ -2,7 +2,7 @@
   "mcpServers": {
     "alive-analysis": {
       "command": "alive-analysis-mcp",
-      "args": ["--analyses-dir", "/Users/boram/BoramClaw/vault/analyses"]
+      "args": ["--analyses-dir", "/Users/boram/Library/Mobile Documents/iCloud~md~obsidian/Documents/MYSC-Vault/analyses"]
     }
   }
 }

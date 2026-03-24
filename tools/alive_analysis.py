@@ -25,7 +25,8 @@ TOOL_SPEC = {
         "ALIVE 분석 루프를 실행합니다 (ASK→LOOK→INVESTIGATE→VOICE→EVOLVE).\n"
         "- '분석 시작', '새 분석', 'analysis' 등의 요청에 응답\n"
         "- new: 새 분석 생성 / next: 다음 단계 진행 / status: 진행률 확인\n"
-        "- search: 과거 분석 검색 / list: 분석 목록 / archive: 완료 보관"
+        "- search: 과거 분석 검색 / list: 분석 목록 / archive: 완료 보관\n"
+        "- tree: 볼트 파일 트리 보기 / dashboard: 분석 현황 대시보드"
     ),
     "version": __version__,
     "network_access": False,
@@ -34,7 +35,7 @@ TOOL_SPEC = {
         "properties": {
             "command": {
                 "type": "string",
-                "enum": ["new", "next", "status", "search", "archive", "list"],
+                "enum": ["new", "next", "status", "search", "archive", "list", "tree", "dashboard"],
                 "description": "실행할 분석 명령",
             },
             "analysis_id": {
@@ -70,7 +71,8 @@ TOOL_SPEC = {
 
 # ── Constants ──
 
-VAULT_SUBDIR = "vault"
+ICLOUD_VAULT = Path.home() / "Library" / "Mobile Documents" / "iCloud~md~obsidian" / "Documents" / "MYSC-Vault"
+FALLBACK_VAULT_SUBDIR = "vault"
 ANALYSES_SUBDIR = "analyses"
 ACTIVE_DIR = "active"
 ARCHIVE_DIR = "archive"
@@ -100,7 +102,10 @@ def _slugify(text: str) -> str:
 
 
 def _resolve_vault(workdir: Path) -> Path:
-    return (workdir / VAULT_SUBDIR).resolve()
+    """iCloud Obsidian 경로 우선, 없으면 로컬 vault/ 폴백."""
+    if ICLOUD_VAULT.exists():
+        return ICLOUD_VAULT
+    return (workdir / FALLBACK_VAULT_SUBDIR).resolve()
 
 
 def _resolve_analyses(workdir: Path) -> Path:
@@ -440,6 +445,128 @@ def cmd_archive(input_data: dict[str, Any], analyses_path: Path) -> dict[str, An
     }
 
 
+def cmd_tree(input_data: dict[str, Any], analyses_path: Path) -> dict[str, Any]:
+    """볼트 전체 파일 트리를 반환한다."""
+    vault_path = analyses_path.parent  # analyses의 부모 = vault root
+
+    def _build_tree(path: Path, prefix: str = "", depth: int = 0, max_depth: int = 4) -> list[str]:
+        if depth > max_depth:
+            return []
+        lines = []
+        entries = sorted(path.iterdir(), key=lambda e: (e.is_file(), e.name))
+        entries = [e for e in entries if not e.name.startswith(".")]
+        for i, entry in enumerate(entries):
+            connector = "└── " if i == len(entries) - 1 else "├── "
+            if entry.is_dir():
+                lines.append(f"{prefix}{connector}{entry.name}/")
+                extension = "    " if i == len(entries) - 1 else "│   "
+                lines.extend(_build_tree(entry, prefix + extension, depth + 1, max_depth))
+            else:
+                size = entry.stat().st_size
+                size_str = f"{size / 1024:.1f}KB" if size > 1024 else f"{size}B"
+                lines.append(f"{prefix}{connector}{entry.name} ({size_str})")
+        return lines
+
+    tree_lines = [f"{vault_path.name}/"] + _build_tree(vault_path)
+
+    # File stats
+    md_count = len(list(vault_path.rglob("*.md")))
+    json_count = len(list(vault_path.rglob("*.json")))
+    total_size = sum(f.stat().st_size for f in vault_path.rglob("*") if f.is_file() and not f.name.startswith("."))
+
+    return {
+        "ok": True,
+        "tree": "\n".join(tree_lines),
+        "stats": {
+            "markdown_files": md_count,
+            "json_files": json_count,
+            "total_size": f"{total_size / 1024:.1f}KB",
+        },
+        "vault_path": str(vault_path),
+    }
+
+
+def cmd_dashboard(input_data: dict[str, Any], analyses_path: Path) -> dict[str, Any]:
+    """분석 현황 대시보드 — 진행 중/완료/태그 분포/최근 활동."""
+    active_path = analyses_path / ACTIVE_DIR
+    archive_path = analyses_path / ARCHIVE_DIR
+    retro_path = analyses_path.parent / "retrospectives" / "daily"
+
+    # Active analyses
+    active_items = []
+    if active_path.exists():
+        for entry in sorted(active_path.iterdir()):
+            if entry.is_dir():
+                meta = _read_meta(entry)
+                idx = _current_stage_index(entry)
+                progress = (idx + 1) / len(STAGES) * 100 if idx >= 0 else 0
+                active_items.append({
+                    "id": meta.get("id", entry.name),
+                    "title": meta.get("title", ""),
+                    "stage": STAGES[idx][1] if idx >= 0 else "N/A",
+                    "progress": f"{progress:.0f}%",
+                    "tags": meta.get("tags", []),
+                    "created": meta.get("created", ""),
+                })
+            elif entry.is_file() and entry.suffix == ".md":
+                match = re.match(r"quick_(Q-\d{4}-\d{4}-\d{3})_(.*)", entry.stem)
+                active_items.append({
+                    "id": match.group(1) if match else entry.stem,
+                    "title": match.group(2).replace("-", " ") if match else entry.stem,
+                    "stage": "Quick",
+                    "progress": "N/A",
+                    "tags": [],
+                    "created": "",
+                })
+
+    # Archived count
+    archived_count = 0
+    if archive_path.exists():
+        archived_count = sum(1 for _ in archive_path.iterdir())
+
+    # Tag distribution
+    all_tags: dict[str, int] = {}
+    for item in active_items:
+        for tag in item.get("tags", []):
+            all_tags[tag] = all_tags.get(tag, 0) + 1
+
+    # Recent retrospectives
+    recent_retros = []
+    if retro_path.exists():
+        retro_files = sorted(retro_path.glob("*.md"), reverse=True)[:5]
+        for f in retro_files:
+            recent_retros.append(f.name)
+
+    # Recent file changes (last 7 days)
+    now = datetime.now()
+    recent_files = []
+    vault_path = analyses_path.parent
+    for f in vault_path.rglob("*"):
+        if f.is_file() and not f.name.startswith("."):
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            if (now - mtime).days <= 7:
+                recent_files.append({
+                    "file": str(f.relative_to(vault_path)),
+                    "modified": mtime.strftime("%Y-%m-%d %H:%M"),
+                })
+    recent_files.sort(key=lambda x: x["modified"], reverse=True)
+
+    return {
+        "ok": True,
+        "summary": {
+            "active_analyses": len(active_items),
+            "archived_analyses": archived_count,
+            "total": len(active_items) + archived_count,
+            "recent_retrospectives": len(recent_retros),
+        },
+        "active": active_items,
+        "tags": all_tags,
+        "recent_changes": recent_files[:10],
+        "recent_retrospectives": recent_retros,
+        "vault_path": str(vault_path),
+    }
+
+
 # ── Entry ──
 
 COMMANDS = {
@@ -449,6 +576,8 @@ COMMANDS = {
     "search": cmd_search,
     "list": cmd_list,
     "archive": cmd_archive,
+    "tree": cmd_tree,
+    "dashboard": cmd_dashboard,
 }
 
 
