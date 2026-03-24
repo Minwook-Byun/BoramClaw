@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "alive-analysis": {
+      "command": "alive-analysis-mcp",
+      "args": ["--analyses-dir", "/Users/boram/BoramClaw/vault/analyses"]
+    }
+  }
+}
