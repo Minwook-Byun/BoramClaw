@@ -1,0 +1,71 @@
+name: windows-vc-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-vc-smoke.yml"
+      - "install_daemon.py"
+      - "setup_wizard.py"
+      - "runtime_commands.py"
+      - "tests/test_setup_wizard.py"
+      - "tests/test_daemon_dispatch.py"
+      - "tests/test_runtime_commands.py"
+      - "tests/test_ops_modules.py"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/windows-vc-smoke.yml"
+      - "install_daemon.py"
+      - "setup_wizard.py"
+      - "runtime_commands.py"
+      - "tests/test_setup_wizard.py"
+      - "tests/test_daemon_dispatch.py"
+      - "tests/test_runtime_commands.py"
+      - "tests/test_ops_modules.py"
+
+jobs:
+  smoke:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Generate gateway onboarding bundle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $workdir = Join-Path $PWD "logs\ci_windows_gateway"
+          if (Test-Path $workdir) { Remove-Item -Recurse -Force $workdir }
+          python setup_wizard.py --vc-mode gateway --non-interactive --workdir "$workdir" --startup-id acme --gateway-secret secret --folder-alias desktop_common --gateway-folder-path "$workdir\shared"
+
+          $required = @(
+            "$workdir\scripts\windows\start_gateway.bat",
+            "$workdir\scripts\windows\install_gateway_service.bat",
+            "$workdir\scripts\windows\uninstall_gateway_service.bat"
+          )
+          foreach ($item in $required) {
+            if (!(Test-Path $item)) { throw "missing expected file: $item" }
+          }
+          if (!(Test-Path "$workdir\config\vc_gateway.json")) { throw "missing gateway config" }
+
+      - name: Validate install_daemon dry-run on Windows
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cfg = (Resolve-Path "logs\ci_windows_gateway\config\vc_gateway.json").Path
+          python install_daemon.py --install --dry-run --mode gateway --gateway-config "$cfg"
+          python install_daemon.py --uninstall --dry-run --mode gateway
+
+      - name: Run focused regression tests
+        run: python -m unittest -q tests.test_setup_wizard tests.test_daemon_dispatch tests.test_runtime_commands tests.test_ops_modules

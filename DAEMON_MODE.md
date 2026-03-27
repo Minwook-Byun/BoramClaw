@@ -539,6 +539,23 @@ Claude Desktop에서 자연어로 질문:
 
 실시간 차트, 규칙 관리 UI 등
 
+## VC Gateway 서비스 설치
+
+스타트업 PC를 수집 게이트웨이로 운영하려면 `install_daemon.py`의 `--mode gateway`를 사용합니다.
+
+```bash
+# macOS / Linux 공통
+python3 install_daemon.py --install --mode gateway --gateway-config config/vc_gateway.json
+```
+
+해제:
+
+```bash
+python3 install_daemon.py --uninstall
+```
+
+게이트웨이 설정 예시는 `config/vc_gateway.json.example`를 참고하세요.
+
 ---
 
 **BoramClaw Daemon Mode**: 잠들지 않는 개발 비서 🤖

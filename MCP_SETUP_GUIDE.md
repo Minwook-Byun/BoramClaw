@@ -311,6 +311,40 @@ STRICT_WORKDIR_ONLY=0
 }
 ```
 
+### VC 명령 연동
+
+MCP/텔레그램 경로에서 아래 명령을 그대로 사용할 수 있습니다.
+
+```text
+/vc register acme Acme AI
+/vc bind-folder acme http://127.0.0.1:8742 desktop_common
+/vc scope acme
+/vc collect acme 7d
+/vc onboard acme 7d
+/vc dashboard acme 30d
+/vc verify acme
+/vc pending acme
+/vc approve <approval_id> force by=alice
+/vc approve <approval_id> force by=bob
+```
+
+관련 도구:
+- `vc_collect_bundle`
+- `vc_generate_report`
+- `vc_approval_queue`
+- `vc_dispatch_email`
+- `vc_remote_e2e_smoke`
+- `vc_scope_policy`
+- `vc_onboarding_check`
+- `vc_ops_dashboard`
+
+게이트웨이 PC가 Windows인 경우 `main.py --setup-vc gateway` 실행 후 생성되는 실행 파일을 사용하면 됩니다.
+
+```text
+scripts\windows\start_gateway.bat
+scripts\windows\install_gateway_service.bat
+```
+
 ### 커스텀 툴 디렉토리
 
 ```json
