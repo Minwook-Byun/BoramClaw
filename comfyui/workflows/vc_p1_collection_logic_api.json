@@ -1,0 +1,107 @@
+{
+  "1": {
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  },
+  "2": {
+    "inputs": {
+      "text": "clean technical workflow diagram, white background, modern flat infographic style, centered title 'OpenClaw VC P1 수집/승인 로직', Korean labels, high readability, clear arrows, balanced spacing. 2-lane layout: Lane A(VC 중앙 오케스트레이터), Lane B(스타트업 로컬 Gateway). Flow: 1 Telegram '/vc collect acme 7d' 2 parser+tenant lookup 3 gateway health 4 POST /manifest 5 shared-folder scan metadata 6 POST /artifact-content pull 7 filename classifier + OCR fallback 8 AES-256-GCM encrypted vault save 9 metadata json + sqlite records 10 auto verification checks(file exists, counts, sha, decrypt, db) 11 approval queue pending 12 Telegram approval notice 13 /vc approve or reject 14 approved only email dispatch + audit log. Policy notes: consent-based shared folder only, no full desktop capture in P1, approval-gated external send, tenant-isolated key/storage. rounded boxes, numbered step badges, green success path, amber pending, red reject path, crisp typography",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "3": {
+    "inputs": {
+      "text": "blurry, noisy, illegible text, cluttered layout, tangled arrows, watermark, logo artifacts, dark background, photorealistic people, 3d render, messy composition",
+      "clip": [
+        "1",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "4": {
+    "inputs": {
+      "width": 1536,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "5": {
+    "inputs": {
+      "seed": 20260219,
+      "steps": 32,
+      "cfg": 6.5,
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "1",
+        0
+      ],
+      "positive": [
+        "2",
+        0
+      ],
+      "negative": [
+        "3",
+        0
+      ],
+      "latent_image": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "6": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "boramclaw/vc_p1_collection_logic",
+      "images": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}
